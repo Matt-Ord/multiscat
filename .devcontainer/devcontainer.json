@@ -1,0 +1,68 @@
+{
+	"name": "Debian",
+	"image": "mcr.microsoft.com/devcontainers/base:bullseye",
+	"features": {
+		"ghcr.io/devcontainers/features/python:1": {
+			"installTools": true,
+			"version": "3.12"
+		},
+		"ghcr.io/devcontainers-contrib/features/poetry:2": {
+			"version": "latest"
+		}
+	},
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"editor.formatOnSave": true,
+				"editor.codeActionsOnSave": {
+					"source.fixAll": "always"
+				},
+				"[json]": {
+					"editor.defaultFormatter": "esbenp.prettier-vscode"
+				},
+				"[python]": {
+					"editor.defaultFormatter": "charliermarsh.ruff",
+					"editor.codeActionsOnSave": {
+						"source.fixAll": "always",
+						"source.organizeImports": "always"
+					},
+					"autoDocstring.docstringFormat": "numpy"
+				},
+				"python.analysis.diagnosticMode": "workspace",
+				"python.analysis.typeCheckingMode": "strict",
+				"python.testing.pytestEnabled": false,
+				"python.testing.unittestEnabled": true,
+				"python.analysis.include": [
+					"multiscat",
+					"examples",
+					"tests"
+				],
+				"python.analysis.autoImportCompletions": true,
+				"cSpell.allowCompoundWords": true,
+				"cSpell.flagWords": [
+					"hte",
+					"teh"
+				],
+				"cSpell.ignoreWords": [
+					"esbenp",
+					"tamasfe"
+				],
+				"cSpell.words": [
+					"dtype",
+					"ndarray",
+					"numpy",
+					"pylance"
+				]
+			},
+			"extensions": [
+				"donjayamanne.python-extension-pack",
+				"esbenp.prettier-vscode",
+				"streetsidesoftware.code-spell-checker",
+				"tamasfe.even-better-toml",
+				"charliermarsh.ruff",
+				"ms-python.vscode-pylance"
+			]
+		}
+	},
+	"onCreateCommand": "poetry install"
+}

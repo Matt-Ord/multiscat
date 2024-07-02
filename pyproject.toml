@@ -1,0 +1,34 @@
+[tool.poetry]
+name = "multiscat"
+version = "0.1.0"
+description = ""
+authors = ["Matthew Ord <matthew.ord1@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "multiscat" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+numpy = "^2.0.0"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.4.10"
+
+[tool.ruff]
+unsafe-fixes = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["D103", "D104", "D100", "D417", "TD003", "TD002"]
+unfixable = ["ERA001", "T201"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"examples/**/*" = ["T201", "INP001"]
+"scripts/**/*" = ["T201", "INP001"]
+"tests/**/*" = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
