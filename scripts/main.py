@@ -1,63 +1,16 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-# Hard limits on Multiscat parameters included everywhere at compile time
-NZFIXED_MAX = 550  # max no of z points in fixed pot.
-NVFCFIXED_MAX = 4096  # max no of fourier cmpts (fixed, from file)
-NMAX = 1024  # diffraction channels
-MMAX = 550  # z grid points
-NFCX = 4096  # max number of potential fourier components per z slice
+from multiscat.config import NMAX, NVFCFIXED_MAX, NZFIXED_MAX, Config
+from multiscat.fixed_potential import interpolate_potential_z, load_fixed_potential
 
-
-@dataclass
-class Config:
-    fourier_labels_file: str
-    scatt_cond_file: str
-    itest: int
-    ipc: int
-    eps: float
-    nsf: int
-    nfc: int
-    zmin: float
-    zmax: float
-    vmin: float
-    dmax: float
-    imax: int
-    a1: float
-    a2: float
-    b2: float
-    nzfixed: int
-    stepzmin: float
-    stepzmax: float
-    startindex: int
-    endindex: int
-    hemass: float
-
-    def __post_init__(self):
-        if self.nfc > NFCX:
-            msg = (
-                "ERROR: the .conf file needs more fourier components than"
-                "allowed by the .inc file (nfc > nfcx)"
-            )
-            raise ValueError(msg)
-        if self.nzfixed > NZFIXED_MAX:
-            msg = (
-                "ERROR: the .conf file needs more z points than"
-                "allowed by the .inc file (nzfixed > NZFIXED_MAX)"
-            )
-            raise ValueError(msg)
-        if self.nfc > NVFCFIXED_MAX:
-            msg = (
-                "ERROR: the .conf file needs more fourier components than"
-                "allowed by the .inc file (nfc > NVFCFIXED_MAX)"
-            )
-            raise ValueError(msg)
+if TYPE_CHECKING:
+    from multiscat.scattering_condition import ScatteringCondition
 
 
 def _parse_value(line: str) -> str:
@@ -135,34 +88,6 @@ def print_config(config: Config) -> None:
     print(f"hemass = {config.hemass}")
 
 
-def load_fixed_pot(config: Config, fourier_file: Path, rmlmda: float):
-    # Initialize vfcfixed to zeros
-    vfcfixed = np.zeros((config.nzfixed, config.nfc), dtype=np.complex128)
-
-    # Open the data file and read in the fourier components
-    with fourier_file.open("r") as file:
-        # Discard the first 5 lines
-        for _ in range(5):
-            next(file)
-
-        # Loop over fourier components
-        for i in range(config.nfc):
-            # Loop over z values in fourier components
-            for j in range(config.nzfixed):
-                line = file.readline().strip()
-                real, imag = map(float, line.strip("()").split(","))
-                vfcfixed[j, i] = complex(real, imag)
-
-    # Scale to the program units
-    vfcfixed *= rmlmda
-
-    return vfcfixed
-
-
-def get_mz(_config: Config, /) -> int:
-    return 550
-
-
 def lobatto(
     a: float,
     b: float,
@@ -222,9 +147,7 @@ def lobatto(
 
 
 def tshape(
-    a: float,
-    b: float,
-    m: int,
+    config: Config,
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     """Calculate the kinetic energy matrix, T, in a normalized Lobatto shape function basis.
 
@@ -232,12 +155,8 @@ def tshape(
     "QUANTUM SCATTERING VIA THE LOG DERIVATIVE VERSION OF THE KOHN VARIATIONAL PRINCIPLE"
     D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
     """
-    if m > MMAX:
-        msg = "tshape 1"
-        raise ValueError(msg)
-
-    n = m + 1
-    ww, xx = lobatto(a, b, n)
+    n = config.mz + 1
+    ww, xx = lobatto(config.zmin, config.zmax, n)
 
     # Scale weights
     ww = np.sqrt(ww)
@@ -261,11 +180,11 @@ def tshape(
 
         tt[i, i] = ff
 
-    w = np.zeros(m)
-    x = np.zeros(m)
-    t = np.zeros((m, m))
+    w = np.zeros(config.mz)
+    x = np.zeros(config.mz)
+    t = np.zeros((config.mz, config.mz))
 
-    for i in range(m):
+    for i in range(config.mz):
         w[i] = ww[i + 1]
         x[i] = xx[i + 1]
 
@@ -280,51 +199,6 @@ def tshape(
     return w, x, t
 
 
-def potent(
-    stepzmin: float,
-    stepzmax: float,
-    nzfixed: int,
-    vfcfixed: np.ndarray[Any, Any],
-    nfc: int,
-    m: int,
-    z: np.ndarray[Any, Any],
-) -> np.ndarray[Any, Any]:
-    """Interpolate the data from Matlab to the data points requested by the call to tshape/findmz.
-
-    The whole of the requested vfc matrix is generated here. Also, have to set which is the zero Fourier component (nfc00).
-    """
-    # Initialize the vfc array with complex zeros
-    vfc = np.zeros((m, nfc), dtype=np.complex128)
-
-    # Generate vfc matrix by interpolation of vfcfixed
-    for i in range(nfc):  # loop over Fourier components
-        for j in range(m):  # loop over requested points
-            # Locate what would be the index in the list of z points
-            zindex = (z[j] - stepzmin) / (stepzmax - stepzmin) * (nzfixed - 1) + 1
-            indexlow = int(zindex)  # truncate to integer
-
-            # Pick out the value we are interested in
-            if zindex == indexlow:
-                # Have got exact value - no need to interpolate
-                vfc[j, i] = vfcfixed[
-                    indexlow - 1,
-                    i,
-                ]  # Adjusted for 0-based indexing in Python
-            else:
-                # Need to interpolate - interpolate real and imaginary parts separately
-                atmp = vfcfixed[
-                    indexlow - 1,
-                    i,
-                ]  # Adjusted for 0-based indexing in Python
-                btmp = vfcfixed[indexlow, i]  # Adjusted for 0-based indexing in Python
-                vrealtmp = atmp + (btmp - atmp) * (zindex - indexlow)
-
-                # Store for use
-                vfc[j, i] = vrealtmp
-
-    return vfc
-
-
 def basis(
     config: Config,
     a1: float,
@@ -333,9 +207,8 @@ def basis(
     ei: float,
     theta: float,
     phi: float,
-    rmlmda: float,
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], int]:
-    """Calculate reciprocal lattice and the z-component of energy of outgoing wave for each channel.
+    """Calculate reciprocal lattice and the z-component of energy of outgoing wave.
 
     Parameters
     ----------
@@ -372,7 +245,7 @@ def basis(
     gbx = -ay * RecUnit
     gby = ax * RecUnit
 
-    ered = rmlmda * ei  # ered is just k_i^2
+    ered = config.rmlmda * ei  # ered is just k_i^2
     thetad = theta * np.pi / 180.0  # Convert theta to radians
     phid = phi * np.pi / 180.0  # Convert phi to radians
 
@@ -500,39 +373,6 @@ def precon(
             for k in range(m):
                 f[k, j] += v[k, i] * g[i]
     return e, v, f
-
-
-def label_fourier_components(
-    config: Config,
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], int]:
-    """Label the Fourier components based on the provided file.
-
-    The components are listed in 'fourier_labels_file'
-    and appear in the same order as in the potential file.
-
-    Parameters
-    ----------
-    fourier_labels_file (str): Path to the file containing Fourier labels.
-    nfc (int): Number of Fourier components.
-
-    Returns
-    -------
-    Tuple[np.ndarray, np.ndarray, int]:
-        Tuple containing arrays of ivx and ivy components and the index of the zero Fourier component (nfc00).
-
-    """
-    ivx = np.zeros(config.nfc, dtype=int)
-    ivy = np.zeros(config.nfc, dtype=int)
-    nfc00 = -1
-
-    with open(config.fourier_labels_file) as file:
-        for i in range(config.nfc):
-            line = file.readline()
-            ivx[i], ivy[i] = map(int, line.split())
-            if ivx[i] == 0 and ivy[i] == 0:
-                nfc00 = i
-
-    return ivx, ivy, nfc00
 
 
 ComplexArray = np.ndarray[Any, np.dtype[np.complex128]]
@@ -792,121 +632,109 @@ def lower(
             x[k - 1, j - 1]
 
 
+def process_scattering_condition(
+    config: Config,
+    fourier_file: Path,
+    condition: ScatteringCondition,
+    *,
+    out_file: Path | None = None,
+) -> None:
+    w, z, t = tshape(config)
+
+    # Initialize the potential
+    fixed_potential = load_fixed_potential(config, fourier_file)
+    interpolated_fixed_potential = interpolate_potential_z(
+        fixed_potential,
+        config.nfc,
+        z,
+    )
+
+    # get reciprocal lattice points
+    # (also calculate how many channels are required for the calculation)
+    d, ix, iy, n00 = basis(
+        config,
+        config.a1,
+        config.a2,
+        config.b2,
+        condition.energy,
+        condition.theta,
+        condition.phi,
+    )
+    if out_file is not None:
+        with out_file.open("a") as f:
+            f.write(
+                f"Number of diffraction channels, n ={d.size}\n",
+            )
+
+    a = np.zeros(d.size, dtype=np.complex128)
+    b = np.zeros(d.size, dtype=np.complex128)
+    c = np.zeros(d.size, dtype=np.complex128)
+    for i in range(d.size):
+        a[i], b[i], c[i] = waves(config, d[i])
+        b[i] = b[i] / w[config.mz]
+        c[i] = c[i] / (w[config.mz] ** 2)
+
+    ivx, ivy, nfc00 = config.label_fourier_components()
+
+    e, v, f = precon(
+        config.mz,
+        d.size,
+        interpolated_fixed_potential.data,
+        nfc00,
+        d,
+        t,
+    )
+
+    gmres(
+        config.mz,
+        ix,
+        iy,
+        d.size,
+        n00,
+        interpolated_fixed_potential.data,
+        ivx,
+        ivy,
+        config.nfc,
+        a,
+        b,
+        c,
+        d,
+        e,
+        f,
+        v,
+        config.eps,
+        config.ipc,
+    )
+
+    # TODO: write outputs
+    # output(ei, theta, phi, ix, iy, d.size, n00, d, p, config.itest)
+
+
 def process_potentials(
     config: Config,
-    rmlmda: float,
 ) -> None:
     np.zeros((NZFIXED_MAX, NVFCFIXED_MAX), dtype=np.complex128)
 
-    ivx, ivy, nfc00 = label_fourier_components(config)
-
     for index in range(config.startindex, config.endindex + 1):
-        fourierfile = Path(f"pot{index:05d}.in")
-        outfile = Path(f"diffrac{index:05d}.out") if config.itest == 1 else None
+        fourier_file = Path(f"pot{index:05d}.in")
+        out_file = Path(f"diffrac{index:05d}.out") if config.itest == 1 else None
 
-        if outfile is not None:
-            with outfile.open("a") as f:
-                f.write(f"Diffraction intensities for potential: {fourierfile}\n")
-
-        # Initialize the potential
-        vfcfixed = load_fixed_pot(config, fourierfile, rmlmda)
+        if out_file is not None:
+            with out_file.open("a") as f:
+                f.write(f"Diffraction intensities for potential: {fourier_file}\n")
 
         # TODO: Calculate scattering over the incident conditions required
         print("")
-        print(f"Calculating scattering for potential: {fourierfile}")
+        print(f"Calculating scattering for potential: {fourier_file}")
         print("Energy / meV    Theta / deg    Phi / deg        I00         Sum")
 
-        with Path(config.scatt_cond_file).open() as file:
-            while True:
-                line = file.readline()
-                if not line:
-                    print("-- End of scattering conditions file --")
-
-                    break
-
-                try:
-                    ei, theta, phi = map(float, line.split())
-                except ValueError:
-                    print("#### ERROR: Invalid line found in input file  ####")
-                    print(
-                        "#### (Make sure scatCond does not contain empty lines) ####",
-                    )
-                    break
-
-                m = get_mz(config)
-                if outfile is not None:
-                    with outfile.open("a") as f:
-                        f.write(
-                            f"Required number of z grid points, m = {m}\n",
-                        )
-
-                if m > MMAX:
-                    msg = "Mz Too Big!"
-                    raise ValueError(msg)
-
-                w, z, t = tshape(config.zmin, config.zmax, m)
-
-                # TODO: interpolate vfcs to required z positions
-                vfc = potent(
-                    config.stepzmin,
-                    config.stepzmax,
-                    config.nzfixed,
-                    vfcfixed,
-                    config.nfc,
-                    m,
-                    z,
-                )
-
-                # TODO: get reciprocal lattice points (also calculate how many channels are required for the calculation)
-                d, ix, iy, n00 = basis(
-                    config,
-                    config.a1,
-                    config.a2,
-                    config.b2,
-                    ei,
-                    theta,
-                    phi,
-                    rmlmda,
-                )
-                if outfile is not None:
-                    with outfile.open("a") as f:
-                        f.write(
-                            f"Number of diffraction channels, n ={d.size}\n",
-                        )
-
-                a = np.zeros(d.size, dtype=np.complex128)
-                b = np.zeros(d.size, dtype=np.complex128)
-                c = np.zeros(d.size, dtype=np.complex128)
-                for i in range(d.size):
-                    a[i], b[i], c[i] = waves(config, d[i])
-                    b[i] = b[i] / w[m]
-                    c[i] = c[i] / (w[m] ** 2)
-
-                e, v, f = precon(m, d.size, vfc, nfc00, d, t)
-
-                gmres(
-                    m,
-                    ix,
-                    iy,
-                    d.size,
-                    n00,
-                    vfc,
-                    ivx,
-                    ivy,
-                    config.nfc,
-                    a,
-                    b,
-                    c,
-                    d,
-                    e,
-                    f,
-                    v,
-                    config.eps,
-                    config.ipc,
-                )
-
-                # TODO: write outputs
-                # output(ei, theta, phi, ix, iy, d.size, n00, d, p, config.itest)
+        for condition in config.scattering_conditions:
+            process_scattering_condition(
+                config,
+                fourier_file,
+                condition,
+                out_file=out_file,
+            )
 
 
 def main() -> None:
@@ -932,8 +760,7 @@ def main() -> None:
     # Print parameters
     print_config(config)
 
-    rmlmda = 2 * config.hemass / 4.18020
-    process_potentials(config, rmlmda)
+    process_potentials(config)
 
 
 if __name__ == "__main__":
