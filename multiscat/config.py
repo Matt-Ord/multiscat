@@ -7,6 +7,7 @@ from typing import Any, Self
 
 import numpy as np
 
+from multiscat.basis import XYBasis
 from multiscat.scattering_condition import (
     ScatteringCondition,
     load_scattering_conditions,
@@ -33,7 +34,6 @@ class Config:
     nfc: int
     zmin: float
     zmax: float
-    vmin: float
     dmax: float
     imax: int
     a1: float
@@ -44,7 +44,7 @@ class Config:
     stepzmax: float
     startindex: int
     endindex: int
-    hemass: float
+    he_mass: float
 
     def __post_init__(self: Self) -> None:  # noqa: D105
         if self.nfc > NFCX:
@@ -78,7 +78,7 @@ class Config:
     @property
     def rmlmda(self: Self) -> float:
         """Get the simulation units."""
-        return 2 * self.hemass / 4.18020
+        return 2 * self.he_mass / 4.18020
 
     @cache  # noqa: B019
     def label_fourier_components(
@@ -117,4 +117,15 @@ class Config:
     @cached_property
     def scattering_conditions(self: Self) -> list[ScatteringCondition]:
         """Get the scattering conditions."""
-        return load_scattering_conditions(Path(self.scatt_cond_file))
+        return load_scattering_conditions(Path(self.scatt_cond_file), self.he_mass)
+
+    @property
+    def xy_basis(self: Self) -> XYBasis:
+        """Get the scattering conditions."""
+        n_points = 1 + 2 * self.imax
+        # TODO: previously this NMax was only for d < dmax
+        if n_points**2 < NMAX:
+            msg = "ERROR: n too big! (basis)"
+            raise ValueError(msg)
+        delta_x_stacked = np.array([[self.a1, self.a2], [0, self.b2]])
+        return XYBasis(delta_x_stacked, (n_points, n_points))

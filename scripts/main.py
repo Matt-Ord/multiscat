@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -42,7 +43,7 @@ def read_config(file_path: Path) -> Config:
     stepzmax = float(_parse_value(lines[15]))
     startindex = int(_parse_value(lines[16]))
     endindex = int(_parse_value(lines[17]))
-    hemass = float(_parse_value(lines[18]))
+    he_mass = float(_parse_value(lines[18]))
 
     return Config(
         fourier_labels_file=fourier_labels_file,
@@ -65,7 +66,7 @@ def read_config(file_path: Path) -> Config:
         stepzmax=stepzmax,
         startindex=startindex,
         endindex=endindex,
-        hemass=hemass,
+        he_mass=he_mass,
     )
 
 
@@ -77,208 +78,174 @@ def print_config(config: Config) -> None:
     print(f"Convergence sig. figures = {config.nsf}")
     print(f"Total number of Fourier components to use = {config.nfc}")
     print(f"z integration range = ({config.zmin}, {config.zmax})")
-    print(f"Potential well depth = {config.vmin}")
     print(f"Max energy of closed channels = {config.dmax}")
     print(f"Max index of channels = {config.imax}")
     print(f"Unit cell (A) = {config.a1} x {config.b2}")
     print(f"Number of z points in Fourier components (nzfixed) = {config.nzfixed}")
     print(
-        f"Calculating for potential input files between {config.startindex}.in and {config.endindex}.in",
+        f"Calculating for potential input files between {config.startindex}.in"
+        f"and {config.endindex}.in",
     )
-    print(f"hemass = {config.hemass}")
+    print(f"Atom Mass = {config.he_mass}")
 
 
-def lobatto(
-    a: float,
-    b: float,
-    n: int,
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+@dataclass
+class LobattoPoints:
+    z_points: np.ndarray[Any, np.dtype[np.float64]]
+    weights: np.ndarray[Any, np.dtype[np.float64]]
+
+
+def get_lobatto_points(
+    z_start: float,
+    z_end: float,
+    n_z: int,
+) -> LobattoPoints:
     """Calculate an n-point Gauss-Lobatto quadrature rule in the interval a < x < b.
 
     Function localizes zeros of the derivative of the (n-1)th Legendre polynomial
     and calculates associated weights.
     """
-    w = np.zeros(n)
-    x = np.zeros(n)
+    w = np.zeros(n_z)
+    x = np.zeros(n_z)
 
-    l = (n + 1) // 2
-    shift = 0.5 * (b + a)
-    scale = 0.5 * (b - a)
-    weight = (b - a) / (n * (n - 1))
+    l = (n_z + 1) // 2
+    shift = 0.5 * (z_end + z_start)
+    scale = 0.5 * (z_end - z_start)
+    weight = (z_end - z_start) / (n_z * (n_z - 1))
 
     # Specific to Lobatto quadrature, first point is a
-    x[0] = a
+    x[0] = z_start
     w[0] = weight
 
     for k in range(1, l + 1):
         # As zeros are symmetric, there is only need to find positive ones
         # z is approximated zero of P[n-1] using Francesco Tricomi approximation
         # then accuracy of the zero is improved using Newton-Raphson
-        z = np.cos(np.pi * (4 * k - 3) / (4 * n - 2))
+        z = np.cos(np.pi * (4 * k - 3) / (4 * n_z - 2))
         p1 = 1.0
         for _i in range(7):
             p2 = 0.0
             p1 = 1.0
-            for j in range(1, n):
+            for j in range(1, n_z):
                 p3 = p2
                 p2 = p1
                 p1 = ((2 * j - 1) * z * p2 - (j - 1) * p3) / j
 
             # p2 gets overwritten to be P[n-1]'
-            p2 = (n - 1) * (p2 - z * p1) / (1.0 - z * z)
+            p2 = (n_z - 1) * (p2 - z * p1) / (1.0 - z * z)
             # p3 gets overwritten to be P[n-1]''
-            p3 = (2.0 * z * p2 - n * (n - 1) * p1) / (1.0 - z * z)
+            p3 = (2.0 * z * p2 - n_z * (n_z - 1) * p1) / (1.0 - z * z)
             # Actual Newton-Raphson step
             z = z - p2 / p3
 
         # Write in shifted and scaled zeros and weights
         x[k - 1] = shift - scale * z
-        x[n - k] = shift + scale * z
+        x[n_z - k] = shift + scale * z
 
         # Write in weights (they are always positive)
         w[k - 1] = weight / (p1 * p1)
-        w[n - k] = w[k - 1]
+        w[n_z - k] = w[k - 1]
 
     # Specific to Lobatto quadrature, last point is b
-    x[n - 1] = b
-    w[n - 1] = weight
+    x[n_z - 1] = z_end
+    w[n_z - 1] = weight
 
-    return w, x
+    return LobattoPoints(z_points=x, weights=w)
 
 
-def tshape(
+def get_lobatto_points_for_config(
     config: Config,
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-    """Calculate the kinetic energy matrix, T, in a normalized Lobatto shape function basis.
-
-    Formula for this are taken from:
-    "QUANTUM SCATTERING VIA THE LOG DERIVATIVE VERSION OF THE KOHN VARIATIONAL PRINCIPLE"
-    D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
-    """
+) -> LobattoPoints:
     n = config.mz + 1
-    ww, xx = lobatto(config.zmin, config.zmax, n)
-
-    # Scale weights
-    ww = np.sqrt(ww)
-
-    tt = np.zeros((n, n))
-    for i in range(n):
-        ff = 0.0
-        for j in range(n):
-            if j == i:
-                continue
-
-            gg = 1.0 / (xx[i] - xx[j])
-            ff += gg
-
-            for k in range(n):
-                if k in (j, i):
-                    continue
-                gg = gg * (xx[j] - xx[k]) / (xx[i] - xx[k])
-
-            tt[j, i] = ww[j] * gg / ww[i]
-
-        tt[i, i] = ff
-
-    w = np.zeros(config.mz)
-    x = np.zeros(config.mz)
-    t = np.zeros((config.mz, config.mz))
-
-    for i in range(config.mz):
-        w[i] = ww[i + 1]
-        x[i] = xx[i + 1]
-
-        for j in range(i + 1):
-            hh = 0.0
-            for k in range(n):
-                hh += tt[k, i + 1] * tt[k, j + 1]
-
-            t[i, j] = hh
-            t[j, i] = hh
-
-    return w, x, t
+    return get_lobatto_points(config.zmin, config.zmax, n)
 
 
-def basis(
-    config: Config,
-    a1: float,
-    a2: float,
-    b2: float,
-    ei: float,
-    theta: float,
-    phi: float,
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], int]:
-    """Calculate reciprocal lattice and the z-component of energy of outgoing wave.
+def get_lobatto_derivatives(
+    points: LobattoPoints,
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """Calculate the derivative matrix u_i'(R_j) for the lobatto basis.
 
     Parameters
     ----------
-    a1 (float): Length of real space lattice vector along axis.
-    a2 (float): X coordinate of other real space lattice vector.
-    b2 (float): Y coordinate of other real space lattice vector.
-    ei (float): Incident energy.
-    theta (float): Theta angle in degrees.
-    phi (float): Phi angle in degrees.
-    rmlmda (float): Constant 2m/h^2.
-    dmax (float): Maximum value of d.
-    imax (int): Maximum index value.
-    nmax (int): Maximum number of channels.
+    points : LobattoPoints
 
     Returns
     -------
-    Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-        - d (np.ndarray): Array of d values.
-        - ix (np.ndarray): Array of ix indices.
-        - iy (np.ndarray): Array of iy indices.
-        - n00 (int): Index of the zero Fourier component.
+    np.ndarray[Any, np.dtype[np.float64]]
 
     """
-    # Reciprocal lattice vectors
-    ax = a1
-    ay = 0.0
-    bx = a2
-    by = b2
+    # The derivatives can be evaluated analytically
+    # u_i'(R_i) = \sum_j=0 M+1 (R_i - R_j)^-1
+    # or for j=\=i
+    # u_i'(R_j) = (R_i - R_j)^-1 product_0^M+1 (R_j-R_k) / (R_i - R_k)
+    # Where the product excludes k=j and k=i
+    n_points = points.z_points.size
 
-    Auc = abs(ax * by)
-    RecUnit = 2 * np.pi / Auc
-    gax = by * RecUnit
-    gay = -bx * RecUnit
-    gbx = -ay * RecUnit
-    gby = ax * RecUnit
+    # Calculate the reciprocal of differences (R_i - R_j)^-1, ignoring the diagonal
+    diff = points.z_points[:, np.newaxis] - points.z_points[np.newaxis, :]
+    reciprocal_diff = np.where(diff != 0, 1.0 / diff, 0)
 
-    ered = config.rmlmda * ei  # ered is just k_i^2
-    thetad = theta * np.pi / 180.0  # Convert theta to radians
-    phid = phi * np.pi / 180.0  # Convert phi to radians
+    # Calculate product_k=0^M+1 (R_j-R_k) / (R_i - R_k)
+    mask = np.eye(n_points, dtype=bool)
+    products = np.prod(
+        np.where(
+            # Ignoring the zero elements from the product
+            mask[np.newaxis, :, :] | mask[:, np.newaxis, :],
+            1,
+            (diff[np.newaxis, :, :] * reciprocal_diff[:, np.newaxis, :]),
+        ),
+        axis=2,
+    )
 
-    pkx = np.sqrt(ered) * np.sin(thetad) * np.cos(phid)
-    pky = np.sqrt(ered) * np.sin(thetad) * np.sin(phid)
+    u_derivative = reciprocal_diff * products
+    # Calculate diagonal elements seperately
+    # u_i'(R_i) = \sum_j=0 M+1 (R_i - R_j)^-1
+    u_derivative[np.arange(n_points), np.arange(n_points)] = np.sum(
+        reciprocal_diff,
+        axis=1,
+    )
+    return u_derivative
 
-    # Initialize arrays
-    d = np.zeros(NMAX, dtype=np.float64)
-    ix = np.zeros(NMAX, dtype=np.int32)
-    iy = np.zeros(NMAX, dtype=np.int32)
 
-    n = 0
-    n00 = -1
+def get_lobatto_t_matrix(
+    points: LobattoPoints,
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """Calculate the kinetic energy matrix, T, in a normalized Lobatto basis.
 
-    for i1 in range(-config.imax, config.imax + 1):
-        for i2 in range(-config.imax, config.imax + 1):
-            gx = gax * i1 + gbx * i2
-            gy = gay * i1 + gby * i2
-            eint = (pkx + gx) ** 2 + (pky + gy) ** 2
-            di = eint - ered
-            if di < config.dmax:
-                n += 1
-                if n <= NMAX:
-                    ix[n - 1] = i1  # Adjust for 0-based indexing in Python
-                    iy[n - 1] = i2
-                    d[n - 1] = di
-                    if i1 == 0 and i2 == 0:
-                        n00 = n
-                else:
-                    msg = "ERROR: n too big! (basis)"
-                    raise ValueError(msg)
+    Formula for this are taken from:
+    "QUANTUM SCATTERING VIA THE LOG DERIVATIVE OF THE KOHN VARIATIONAL PRINCIPLE"
+    D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
+    """
+    derivatives = get_lobatto_derivatives(points)
 
-    return d[:n], ix[:n], iy[:n], n00
+    # We make use of the formula
+    # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
+    # to calculate the kinetic matrix T_ij
+    return np.einsum("k,ik,jk->ij", points.weights, derivatives, derivatives)  # type: ignore einsum
+
+
+def get_scattering_energy(
+    config: Config,
+    condition: ScatteringCondition,
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+    """Get the matrix of scattered energies d.
+
+    Uses the formula
+    d = |k in + k scatter|**2 - |k in|**2
+    """
+    pkx, pky, _pkz = condition.momentum
+    abs_squared_k = np.linalg.norm(condition.momentum) ** 2
+    # TODO: previously we worked in a sparse basis in d
+    # such that di < config.dmax
+    # These channels will only have a small scattering contribution
+    # It might be good to do this too!
+
+    (kx, ky) = config.xy_basis.k_points_stacked
+
+    e_int = (pkx + kx) ** 2 + (pky + ky) ** 2
+    # d is the difference between the initial energy
+    # and the final energy
+    return e_int - abs_squared_k
 
 
 def waves(
@@ -329,7 +296,9 @@ def precon(
     d: np.ndarray[Any, Any],
     t: np.ndarray[Any, Any],
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-    """Construct the matrix factors required for the block lower triangular preconditioner used in GMRES.
+    """Construct the matrix factors required for the block lower triangular preconditioner.
+
+    This is required for use in GMRES.
 
     Parameters
     ----------
@@ -376,7 +345,8 @@ def precon(
 
 
 ComplexArray = np.ndarray[Any, np.dtype[np.complex128]]
-DoubleArray = np.ndarray[Any, np.dtype[np.complex128]]
+DoubleArray = np.ndarray[Any, np.dtype[np.float64]]
+IntArray = np.ndarray[Any, np.dtype[np.int64]]
 
 
 def zrotg(a: complex, b: complex) -> tuple[complex, complex, complex, complex]:
@@ -420,8 +390,8 @@ def zrotg(a: complex, b: complex) -> tuple[complex, complex, complex, complex]:
 
 def gmres(
     m: int,
-    ix: DoubleArray,
-    iy: DoubleArray,
+    ix: IntArray,
+    iy: IntArray,
     n: int,
     n00: int,
     vfc: ComplexArray,
@@ -566,8 +536,8 @@ def gmres(
 def upper(
     x: ComplexArray,
     m: int,
-    ix: DoubleArray,
-    iy: DoubleArray,
+    ix: IntArray,
+    iy: IntArray,
     n: int,
     vfc: ComplexArray,
     ivx: DoubleArray,
@@ -591,8 +561,8 @@ def upper(
 def lower(
     x: ComplexArray,
     m: int,
-    ix: DoubleArray,
-    iy: DoubleArray,
+    ix: IntArray,
+    iy: IntArray,
     n: int,
     vfc: ComplexArray,
     ivx: DoubleArray,
@@ -639,27 +609,20 @@ def process_scattering_condition(
     *,
     out_file: Path | None = None,
 ) -> None:
-    w, z, t = tshape(config)
+    lobatto_points = get_lobatto_points_for_config(config)
+    t_matrix = get_lobatto_t_matrix(lobatto_points)
 
     # Initialize the potential
     fixed_potential = load_fixed_potential(config, fourier_file)
     interpolated_fixed_potential = interpolate_potential_z(
         fixed_potential,
         config.nfc,
-        z,
+        lobatto_points.z_points,
     )
 
     # get reciprocal lattice points
     # (also calculate how many channels are required for the calculation)
-    d, ix, iy, n00 = basis(
-        config,
-        config.a1,
-        config.a2,
-        config.b2,
-        condition.energy,
-        condition.theta,
-        condition.phi,
-    )
+    d = get_scattering_energy(config, condition)
     if out_file is not None:
         with out_file.open("a") as f:
             f.write(
@@ -669,6 +632,9 @@ def process_scattering_condition(
     a = np.zeros(d.size, dtype=np.complex128)
     b = np.zeros(d.size, dtype=np.complex128)
     c = np.zeros(d.size, dtype=np.complex128)
+
+    # TODO: is is sqrt omega here, and is it n-1 elements...
+    w = lobatto_points.weights
     for i in range(d.size):
         a[i], b[i], c[i] = waves(config, d[i])
         b[i] = b[i] / w[config.mz]
@@ -682,15 +648,15 @@ def process_scattering_condition(
         interpolated_fixed_potential.data,
         nfc00,
         d,
-        t,
+        t_matrix,
     )
 
     gmres(
         config.mz,
-        ix,
-        iy,
+        config.xy_basis.nk_points_stacked[0],
+        config.xy_basis.nk_points_stacked[1],
         d.size,
-        n00,
+        0,
         interpolated_fixed_potential.data,
         ivx,
         ivy,

@@ -51,7 +51,8 @@
 					"dtype",
 					"ndarray",
 					"numpy",
-					"pylance"
+					"pylance",
+					"lobatto"
 				]
 			},
 			"extensions": [
