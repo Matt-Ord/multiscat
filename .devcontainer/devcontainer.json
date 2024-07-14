@@ -52,7 +52,8 @@
 					"ndarray",
 					"numpy",
 					"pylance",
-					"lobatto"
+					"lobatto",
+					"gmres"
 				]
 			},
 			"extensions": [

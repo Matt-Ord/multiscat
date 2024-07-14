@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import cache, cached_property
+from functools import cached_property
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 
 import numpy as np
 
 from multiscat.basis import XYBasis
+from multiscat.lobatto import LobattoPoints, get_lobatto_points
 from multiscat.scattering_condition import (
     ScatteringCondition,
     load_scattering_conditions,
@@ -19,6 +20,12 @@ NVFCFIXED_MAX = 4096  # max no of fourier cmpts (fixed, from file)
 NMAX = 1024  # diffraction channels
 MMAX = 550  # z grid points
 NFCX = 4096  # max number of potential fourier components per z slice
+
+
+@dataclass
+class GMRESConfig:
+    precision: float
+    preconditioner: int
 
 
 @dataclass
@@ -80,40 +87,6 @@ class Config:
         """Get the simulation units."""
         return 2 * self.he_mass / 4.18020
 
-    @cache  # noqa: B019
-    def label_fourier_components(
-        self: Config,
-    ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], int]:
-        """Label the Fourier components based on the provided file.
-
-        The components are listed in 'fourier_labels_file'
-        and appear in the same order as in the potential file.
-
-        Parameters
-        ----------
-        fourier_labels_file (str): Path to the file containing Fourier labels.
-        nfc (int): Number of Fourier components.
-
-        Returns
-        -------
-        Tuple[np.ndarray, np.ndarray, int]:
-            Tuple containing arrays of ivx and ivy components and the index of the zero
-            Fourier component (nfc00).
-
-        """
-        ivx = np.zeros(self.nfc, dtype=np.int_)
-        ivy = np.zeros(self.nfc, dtype=np.int_)
-        nfc00 = -1
-
-        with Path(self.fourier_labels_file).open() as file:
-            for i in range(self.nfc):
-                line = file.readline()
-                ivx[i], ivy[i] = map(int, line.split())
-                if ivx[i] == 0 and ivy[i] == 0:
-                    nfc00 = i
-
-        return ivx, ivy, nfc00
-
     @cached_property
     def scattering_conditions(self: Self) -> list[ScatteringCondition]:
         """Get the scattering conditions."""
@@ -129,3 +102,89 @@ class Config:
             raise ValueError(msg)
         delta_x_stacked = np.array([[self.a1, self.a2], [0, self.b2]])
         return XYBasis(delta_x_stacked, (n_points, n_points))
+
+    @property
+    def gmres_config(self: Self) -> GMRESConfig:
+        return GMRESConfig(precision=self.eps, preconditioner=self.ipc)
+
+
+def get_lobatto_points_for_config(
+    config: Config,
+) -> LobattoPoints:
+    n = config.mz + 1
+    return get_lobatto_points(n, (config.zmin, config.zmax))
+
+
+def _parse_value(line: str) -> str:
+    return line.split("!")[0].strip()
+
+
+def read_config(file_path: Path) -> Config:
+    with file_path.open("r") as file:
+        lines = file.readlines()
+
+    fourier_labels_file = _parse_value(lines[0])
+    scatt_cond_file = _parse_value(lines[1])
+    itest = int(_parse_value(lines[2]))
+    ipc = int(_parse_value(lines[3]))
+    ipc = min(max(ipc, 0), 1)
+    nsf = int(_parse_value(lines[4]))
+    nsf = min(max(nsf, 2), 5)
+    eps = 0.5 * (10 ** (-nsf))
+    nfc = int(_parse_value(lines[5]))
+    zmin, zmax = map(float, _parse_value(lines[6]).split(","))
+    float(_parse_value(lines[7]))
+    dmax = float(_parse_value(lines[8]))
+    imax = int(_parse_value(lines[9]))
+    a1 = float(_parse_value(lines[10]))
+    a2 = float(_parse_value(lines[11]))
+    b2 = float(_parse_value(lines[12]))
+    nzfixed = int(_parse_value(lines[13]))
+    stepzmin = float(_parse_value(lines[14]))
+    stepzmax = float(_parse_value(lines[15]))
+    startindex = int(_parse_value(lines[16]))
+    endindex = int(_parse_value(lines[17]))
+    he_mass = float(_parse_value(lines[18]))
+
+    return Config(
+        fourier_labels_file=fourier_labels_file,
+        scatt_cond_file=scatt_cond_file,
+        itest=itest,
+        ipc=ipc,
+        eps=eps,
+        nsf=nsf,
+        nfc=nfc,
+        zmin=zmin,
+        zmax=zmax,
+        dmax=dmax,
+        imax=imax,
+        a1=a1,
+        a2=a2,
+        b2=b2,
+        nzfixed=nzfixed,
+        stepzmin=stepzmin,
+        stepzmax=stepzmax,
+        startindex=startindex,
+        endindex=endindex,
+        he_mass=he_mass,
+    )
+
+
+def print_config(config: Config) -> None:
+    # TODO: as __str__ impl
+    print(f"Fourier labels file = {config.fourier_labels_file}")
+    print(f"Loading scattering conditions from {config.scatt_cond_file}")
+    print(f"Output mode = {config.itest}")
+    print(f"GMRES preconditioner flag = {config.ipc}")
+    print(f"Convergence sig. figures = {config.nsf}")
+    print(f"Total number of Fourier components to use = {config.nfc}")
+    print(f"z integration range = ({config.zmin}, {config.zmax})")
+    print(f"Max energy of closed channels = {config.dmax}")
+    print(f"Max index of channels = {config.imax}")
+    print(f"Unit cell (A) = {config.a1} x {config.b2}")
+    print(f"Number of z points in Fourier components (nzfixed) = {config.nzfixed}")
+    print(
+        f"Calculating for potential input files between {config.startindex}.in"
+        f"and {config.endindex}.in",
+    )
+    print(f"Atom Mass = {config.he_mass}")

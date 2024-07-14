@@ -1,210 +1,27 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from multiscat.config import NMAX, NVFCFIXED_MAX, NZFIXED_MAX, Config
-from multiscat.fixed_potential import interpolate_potential_z, load_fixed_potential
+from multiscat.config import (
+    NMAX,
+    NVFCFIXED_MAX,
+    NZFIXED_MAX,
+    Config,
+    GMRESConfig,
+    print_config,
+    read_config,
+)
+from multiscat.fixed_potential import load_fixed_potential
+from multiscat.lobatto import LobattoPoints, get_lobatto_derivatives
 
 if TYPE_CHECKING:
+    from multiscat.basis import XYBasis
+    from multiscat.fixed_potential import FixedPotential
     from multiscat.scattering_condition import ScatteringCondition
-
-
-def _parse_value(line: str) -> str:
-    return line.split("!")[0].strip()
-
-
-def read_config(file_path: Path) -> Config:
-    with file_path.open("r") as file:
-        lines = file.readlines()
-
-    fourier_labels_file = _parse_value(lines[0])
-    scatt_cond_file = _parse_value(lines[1])
-    itest = int(_parse_value(lines[2]))
-    ipc = int(_parse_value(lines[3]))
-    ipc = min(max(ipc, 0), 1)
-    nsf = int(_parse_value(lines[4]))
-    nsf = min(max(nsf, 2), 5)
-    eps = 0.5 * (10 ** (-nsf))
-    nfc = int(_parse_value(lines[5]))
-    zmin, zmax = map(float, _parse_value(lines[6]).split(","))
-    vmin = float(_parse_value(lines[7]))
-    dmax = float(_parse_value(lines[8]))
-    imax = int(_parse_value(lines[9]))
-    a1 = float(_parse_value(lines[10]))
-    a2 = float(_parse_value(lines[11]))
-    b2 = float(_parse_value(lines[12]))
-    nzfixed = int(_parse_value(lines[13]))
-    stepzmin = float(_parse_value(lines[14]))
-    stepzmax = float(_parse_value(lines[15]))
-    startindex = int(_parse_value(lines[16]))
-    endindex = int(_parse_value(lines[17]))
-    he_mass = float(_parse_value(lines[18]))
-
-    return Config(
-        fourier_labels_file=fourier_labels_file,
-        scatt_cond_file=scatt_cond_file,
-        itest=itest,
-        ipc=ipc,
-        eps=eps,
-        nsf=nsf,
-        nfc=nfc,
-        zmin=zmin,
-        zmax=zmax,
-        vmin=vmin,
-        dmax=dmax,
-        imax=imax,
-        a1=a1,
-        a2=a2,
-        b2=b2,
-        nzfixed=nzfixed,
-        stepzmin=stepzmin,
-        stepzmax=stepzmax,
-        startindex=startindex,
-        endindex=endindex,
-        he_mass=he_mass,
-    )
-
-
-def print_config(config: Config) -> None:
-    print(f"Fourier labels file = {config.fourier_labels_file}")
-    print(f"Loading scattering conditions from {config.scatt_cond_file}")
-    print(f"Output mode = {config.itest}")
-    print(f"GMRES preconditioner flag = {config.ipc}")
-    print(f"Convergence sig. figures = {config.nsf}")
-    print(f"Total number of Fourier components to use = {config.nfc}")
-    print(f"z integration range = ({config.zmin}, {config.zmax})")
-    print(f"Max energy of closed channels = {config.dmax}")
-    print(f"Max index of channels = {config.imax}")
-    print(f"Unit cell (A) = {config.a1} x {config.b2}")
-    print(f"Number of z points in Fourier components (nzfixed) = {config.nzfixed}")
-    print(
-        f"Calculating for potential input files between {config.startindex}.in"
-        f"and {config.endindex}.in",
-    )
-    print(f"Atom Mass = {config.he_mass}")
-
-
-@dataclass
-class LobattoPoints:
-    z_points: np.ndarray[Any, np.dtype[np.float64]]
-    weights: np.ndarray[Any, np.dtype[np.float64]]
-
-
-def get_lobatto_points(
-    z_start: float,
-    z_end: float,
-    n_z: int,
-) -> LobattoPoints:
-    """Calculate an n-point Gauss-Lobatto quadrature rule in the interval a < x < b.
-
-    Function localizes zeros of the derivative of the (n-1)th Legendre polynomial
-    and calculates associated weights.
-    """
-    w = np.zeros(n_z)
-    x = np.zeros(n_z)
-
-    l = (n_z + 1) // 2
-    shift = 0.5 * (z_end + z_start)
-    scale = 0.5 * (z_end - z_start)
-    weight = (z_end - z_start) / (n_z * (n_z - 1))
-
-    # Specific to Lobatto quadrature, first point is a
-    x[0] = z_start
-    w[0] = weight
-
-    for k in range(1, l + 1):
-        # As zeros are symmetric, there is only need to find positive ones
-        # z is approximated zero of P[n-1] using Francesco Tricomi approximation
-        # then accuracy of the zero is improved using Newton-Raphson
-        z = np.cos(np.pi * (4 * k - 3) / (4 * n_z - 2))
-        p1 = 1.0
-        for _i in range(7):
-            p2 = 0.0
-            p1 = 1.0
-            for j in range(1, n_z):
-                p3 = p2
-                p2 = p1
-                p1 = ((2 * j - 1) * z * p2 - (j - 1) * p3) / j
-
-            # p2 gets overwritten to be P[n-1]'
-            p2 = (n_z - 1) * (p2 - z * p1) / (1.0 - z * z)
-            # p3 gets overwritten to be P[n-1]''
-            p3 = (2.0 * z * p2 - n_z * (n_z - 1) * p1) / (1.0 - z * z)
-            # Actual Newton-Raphson step
-            z = z - p2 / p3
-
-        # Write in shifted and scaled zeros and weights
-        x[k - 1] = shift - scale * z
-        x[n_z - k] = shift + scale * z
-
-        # Write in weights (they are always positive)
-        w[k - 1] = weight / (p1 * p1)
-        w[n_z - k] = w[k - 1]
-
-    # Specific to Lobatto quadrature, last point is b
-    x[n_z - 1] = z_end
-    w[n_z - 1] = weight
-
-    return LobattoPoints(z_points=x, weights=w)
-
-
-def get_lobatto_points_for_config(
-    config: Config,
-) -> LobattoPoints:
-    n = config.mz + 1
-    return get_lobatto_points(config.zmin, config.zmax, n)
-
-
-def get_lobatto_derivatives(
-    points: LobattoPoints,
-) -> np.ndarray[Any, np.dtype[np.float64]]:
-    """Calculate the derivative matrix u_i'(R_j) for the lobatto basis.
-
-    Parameters
-    ----------
-    points : LobattoPoints
-
-    Returns
-    -------
-    np.ndarray[Any, np.dtype[np.float64]]
-
-    """
-    # The derivatives can be evaluated analytically
-    # u_i'(R_i) = \sum_j=0 M+1 (R_i - R_j)^-1
-    # or for j=\=i
-    # u_i'(R_j) = (R_i - R_j)^-1 product_0^M+1 (R_j-R_k) / (R_i - R_k)
-    # Where the product excludes k=j and k=i
-    n_points = points.z_points.size
-
-    # Calculate the reciprocal of differences (R_i - R_j)^-1, ignoring the diagonal
-    diff = points.z_points[:, np.newaxis] - points.z_points[np.newaxis, :]
-    reciprocal_diff = np.where(diff != 0, 1.0 / diff, 0)
-
-    # Calculate product_k=0^M+1 (R_j-R_k) / (R_i - R_k)
-    mask = np.eye(n_points, dtype=bool)
-    products = np.prod(
-        np.where(
-            # Ignoring the zero elements from the product
-            mask[np.newaxis, :, :] | mask[:, np.newaxis, :],
-            1,
-            (diff[np.newaxis, :, :] * reciprocal_diff[:, np.newaxis, :]),
-        ),
-        axis=2,
-    )
-
-    u_derivative = reciprocal_diff * products
-    # Calculate diagonal elements seperately
-    # u_i'(R_i) = \sum_j=0 M+1 (R_i - R_j)^-1
-    u_derivative[np.arange(n_points), np.arange(n_points)] = np.sum(
-        reciprocal_diff,
-        axis=1,
-    )
-    return u_derivative
 
 
 def get_lobatto_t_matrix(
@@ -225,7 +42,7 @@ def get_lobatto_t_matrix(
 
 
 def get_scattering_energy(
-    config: Config,
+    basis: XYBasis,
     condition: ScatteringCondition,
 ) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Get the matrix of scattered energies d.
@@ -240,7 +57,7 @@ def get_scattering_energy(
     # These channels will only have a small scattering contribution
     # It might be good to do this too!
 
-    (kx, ky) = config.xy_basis.k_points_stacked
+    (kx, ky) = basis.k_points_stacked
 
     e_int = (pkx + kx) ** 2 + (pky + ky) ** 2
     # d is the difference between the initial energy
@@ -249,10 +66,12 @@ def get_scattering_energy(
 
 
 def waves(
-    config: Config,
+    zmax: float,
     w0: float,
 ) -> tuple[complex, complex, complex]:
-    """Construct and store the diagonal matrices a, b, and c that enter the log derivative Kohn expression for the S-matrix.
+    """Construct and store the diagonal matrices a, b, and c.
+
+    As defined in the the log derivative Kohn expression for the S-matrix.
 
     Parameters
     ----------
@@ -270,7 +89,7 @@ def waves(
     dk = np.sqrt(abs(w0))
 
     if w0 < 0.0:
-        theta = dk * config.zmax
+        theta = dk * zmax
         bcc = np.cos(2.0 * theta)
         bcs = np.sin(2.0 * theta)
         cc = np.cos(theta)
@@ -292,7 +111,6 @@ def precon(
     m: int,
     n: int,
     vfc: np.ndarray[Any, Any],
-    nfc00: int,
     d: np.ndarray[Any, Any],
     t: np.ndarray[Any, Any],
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
@@ -317,6 +135,7 @@ def precon(
     None
 
     """
+    nfc00 = 0
     if m > t.shape[0]:
         msg = "precon 1"
         raise ValueError(msg)
@@ -395,12 +214,10 @@ def gmres(
     n: int,
     n00: int,
     vfc: ComplexArray,
-    ivx: DoubleArray,
-    ivy: DoubleArray,
     nfc: int,
-    a: ComplexArray,
-    b: ComplexArray,
-    c: ComplexArray,
+    _a: ComplexArray,
+    _b: ComplexArray,
+    _c: ComplexArray,
     d: DoubleArray,
     e: DoubleArray,
     f: ComplexArray,
@@ -430,6 +247,7 @@ def gmres(
     kount = 0
     xx[:, 0] = x[:]
     y = x.copy()
+    ivx, ivy = ix, iy
     upper(x, m, ix, iy, n, vfc, ivx, ivy, nfc)
     x[:] = -x[:]
     x[m * n00] = b[n00] + x[m * n00]
@@ -540,8 +358,8 @@ def upper(
     iy: IntArray,
     n: int,
     vfc: ComplexArray,
-    ivx: DoubleArray,
-    ivy: DoubleArray,
+    ivx: IntArray,
+    ivy: IntArray,
     nfc: int,
 ) -> None:
     """Performs the block upper triangular matrix multiplication y = U*x, where A = L+U.
@@ -565,8 +383,8 @@ def lower(
     iy: IntArray,
     n: int,
     vfc: ComplexArray,
-    ivx: DoubleArray,
-    ivy: DoubleArray,
+    ivx: IntArray,
+    ivy: IntArray,
     nfc: int,
     c: ComplexArray,
     d: DoubleArray,
@@ -603,31 +421,23 @@ def lower(
 
 
 def process_scattering_condition(
-    config: Config,
-    fourier_file: Path,
+    potential: FixedPotential,
     condition: ScatteringCondition,
-    *,
-    out_file: Path | None = None,
+    config: GMRESConfig,
 ) -> None:
-    lobatto_points = get_lobatto_points_for_config(config)
+    lobatto_points = potential.lobatto_basis
+    mz = lobatto_points.points.size - 1
     t_matrix = get_lobatto_t_matrix(lobatto_points)
-
-    # Initialize the potential
-    fixed_potential = load_fixed_potential(config, fourier_file)
-    interpolated_fixed_potential = interpolate_potential_z(
-        fixed_potential,
-        config.nfc,
-        lobatto_points.z_points,
-    )
 
     # get reciprocal lattice points
     # (also calculate how many channels are required for the calculation)
-    d = get_scattering_energy(config, condition)
-    if out_file is not None:
-        with out_file.open("a") as f:
-            f.write(
-                f"Number of diffraction channels, n ={d.size}\n",
-            )
+    d = get_scattering_energy(potential.xy_basis, condition)
+    # TODO: write to output
+    # if out_file is not None:
+    #     with out_file.open("a") as f:
+    #         f.write(
+    #             f"Number of diffraction channels, n ={d.size}\n",
+    #         )
 
     a = np.zeros(d.size, dtype=np.complex128)
     b = np.zeros(d.size, dtype=np.complex128)
@@ -635,32 +445,28 @@ def process_scattering_condition(
 
     # TODO: is is sqrt omega here, and is it n-1 elements...
     w = lobatto_points.weights
+    z_max = lobatto_points.points[-1]
     for i in range(d.size):
-        a[i], b[i], c[i] = waves(config, d[i])
-        b[i] = b[i] / w[config.mz]
-        c[i] = c[i] / (w[config.mz] ** 2)
-
-    ivx, ivy, nfc00 = config.label_fourier_components()
+        a[i], b[i], c[i] = waves(z_max, d[i])
+        b[i] = b[i] / w[mz]
+        c[i] = c[i] / (w[mz] ** 2)
 
     e, v, f = precon(
-        config.mz,
+        mz,
         d.size,
-        interpolated_fixed_potential.data,
-        nfc00,
+        potential.data,
         d,
         t_matrix,
     )
 
     gmres(
-        config.mz,
-        config.xy_basis.nk_points_stacked[0],
-        config.xy_basis.nk_points_stacked[1],
+        mz,
+        potential.xy_basis.nk_points_stacked[0],
+        potential.xy_basis.nk_points_stacked[1],
         d.size,
         0,
-        interpolated_fixed_potential.data,
-        ivx,
-        ivy,
-        config.nfc,
+        potential.data,
+        np.prod(potential.xy_basis.shape).item(),
         a,
         b,
         c,
@@ -668,8 +474,8 @@ def process_scattering_condition(
         e,
         f,
         v,
-        config.eps,
-        config.ipc,
+        config.precision,
+        config.preconditioner,
     )
 
     # TODO: write outputs
@@ -694,12 +500,13 @@ def process_potentials(
         print(f"Calculating scattering for potential: {fourier_file}")
         print("Energy / meV    Theta / deg    Phi / deg        I00         Sum")
 
+        # Initialize the potential
+        fixed_potential = load_fixed_potential(config, fourier_file)
         for condition in config.scattering_conditions:
             process_scattering_condition(
-                config,
-                fourier_file,
+                fixed_potential,
                 condition,
-                out_file=out_file,
+                config.gmres_config,
             )
 
 

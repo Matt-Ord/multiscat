@@ -9,6 +9,7 @@ packages = [{ include = "multiscat" }]
 [tool.poetry.dependencies]
 python = "^3.12"
 numpy = "^2.0.0"
+scipy = "^1.14.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.4.10"
