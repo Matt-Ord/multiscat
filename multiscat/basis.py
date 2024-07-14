@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Self
+from functools import cached_property
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
+
+from multiscat.lobatto import get_lobatto_points
+
+if TYPE_CHECKING:
+    from multiscat.lobatto import LobattoPoints
 
 
 @dataclass
@@ -54,3 +60,70 @@ class XYBasis:
     ) -> tuple[np.ndarray[tuple[int], np.dtype[np.int_]], ...]:
         """Get the k points."""
         return np.einsum("ij,il->lj", self.nk_points_stacked, self.dk_stacked)
+
+
+@dataclass
+class LobattoBasis:
+    """Represents an n-point lobatto basis."""
+
+    n_points: int
+    delta_x: float
+
+    @cached_property
+    def _lobatto_points(self: Self) -> LobattoPoints:
+        return get_lobatto_points(self.n_points, (0, self.delta_x))
+
+    @property
+    def points(self: Self):
+        return self._lobatto_points.points
+
+    @property
+    def weights(self: Self):
+        return self._lobatto_points.weights
+
+
+def get_lobatto_derivatives(
+    points: LobattoBasis,
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+    """Calculate the derivative matrix u_i'(R_j) for the lobatto basis.
+
+    Parameters
+    ----------
+    points : LobattoPoints
+
+    Returns
+    -------
+    np.ndarray[Any, np.dtype[np.float64]]
+
+    """
+    # The derivatives can be evaluated analytically
+    # u_i'(R_i) = \sum_j=0 M+1 (R_i - R_j)^-1
+    # or for j=\=i
+    # u_i'(R_j) = (R_i - R_j)^-1 product_0^M+1 (R_j-R_k) / (R_i - R_k)
+    # Where the product excludes k=j and k=i
+    n_points = points.points.size
+
+    # Calculate the reciprocal of differences (R_i - R_j)^-1, ignoring the diagonal
+    diff = points.points[:, np.newaxis] - points.points[np.newaxis, :]
+    reciprocal_diff = np.where(diff != 0, 1.0 / diff, 0)
+
+    # Calculate product_k=0^M+1 (R_j-R_k) / (R_i - R_k)
+    mask = np.eye(n_points, dtype=bool)
+    products = np.prod(
+        np.where(
+            # Ignoring the zero elements from the product
+            mask[np.newaxis, :, :] | mask[:, np.newaxis, :],
+            1,
+            (diff[np.newaxis, :, :] * reciprocal_diff[:, np.newaxis, :]),
+        ),
+        axis=2,
+    )
+
+    u_derivative = reciprocal_diff * products
+    # Calculate diagonal elements seperately
+    # u_i'(R_i) = \sum_j=0 M+1 (R_i - R_j)^-1
+    u_derivative[np.arange(n_points), np.arange(n_points)] = np.sum(
+        reciprocal_diff,
+        axis=1,
+    )
+    return u_derivative

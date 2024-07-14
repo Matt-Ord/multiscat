@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from multiscat.basis import get_lobatto_derivatives
 from multiscat.config import (
     NMAX,
     NVFCFIXED_MAX,
@@ -16,16 +17,15 @@ from multiscat.config import (
     read_config,
 )
 from multiscat.fixed_potential import load_fixed_potential
-from multiscat.lobatto import LobattoPoints, get_lobatto_derivatives
 
 if TYPE_CHECKING:
-    from multiscat.basis import XYBasis
+    from multiscat.basis import LobattoBasis, XYBasis
     from multiscat.fixed_potential import FixedPotential
     from multiscat.scattering_condition import ScatteringCondition
 
 
 def get_lobatto_t_matrix(
-    points: LobattoPoints,
+    basis: LobattoBasis,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     """Calculate the kinetic energy matrix, T, in a normalized Lobatto basis.
 
@@ -33,12 +33,12 @@ def get_lobatto_t_matrix(
     "QUANTUM SCATTERING VIA THE LOG DERIVATIVE OF THE KOHN VARIATIONAL PRINCIPLE"
     D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
     """
-    derivatives = get_lobatto_derivatives(points)
+    derivatives = get_lobatto_derivatives(basis)
 
     # We make use of the formula
     # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
     # to calculate the kinetic matrix T_ij
-    return np.einsum("k,ik,jk->ij", points.weights, derivatives, derivatives)  # type: ignore einsum
+    return np.einsum("k,ik,jk->ij", basis.weights, derivatives, derivatives)  # type: ignore einsum
 
 
 def get_scattering_energy(
@@ -425,9 +425,9 @@ def process_scattering_condition(
     condition: ScatteringCondition,
     config: GMRESConfig,
 ) -> None:
-    lobatto_points = potential.lobatto_basis
-    mz = lobatto_points.points.size - 1
-    t_matrix = get_lobatto_t_matrix(lobatto_points)
+    lobatto_basis = potential.z_basis
+    mz = lobatto_basis.points.size - 1
+    t_matrix = get_lobatto_t_matrix(lobatto_basis)
 
     # get reciprocal lattice points
     # (also calculate how many channels are required for the calculation)
@@ -444,8 +444,8 @@ def process_scattering_condition(
     c = np.zeros(d.size, dtype=np.complex128)
 
     # TODO: is is sqrt omega here, and is it n-1 elements...
-    w = lobatto_points.weights
-    z_max = lobatto_points.points[-1]
+    w = lobatto_basis.weights
+    z_max = lobatto_basis.points[-1]
     for i in range(d.size):
         a[i], b[i], c[i] = waves(z_max, d[i])
         b[i] = b[i] / w[mz]

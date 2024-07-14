@@ -7,8 +7,7 @@ from typing import Self
 
 import numpy as np
 
-from multiscat.basis import XYBasis
-from multiscat.lobatto import LobattoPoints, get_lobatto_points
+from multiscat.basis import LobattoBasis, XYBasis
 from multiscat.scattering_condition import (
     ScatteringCondition,
     load_scattering_conditions,
@@ -110,9 +109,10 @@ class Config:
 
 def get_lobatto_points_for_config(
     config: Config,
-) -> LobattoPoints:
-    n = config.mz + 1
-    return get_lobatto_points(n, (config.zmin, config.zmax))
+) -> LobattoBasis:
+    n_points = config.mz + 1
+
+    return LobattoBasis(n_points, config.zmax - config.zmin)
 
 
 def _parse_value(line: str) -> str:

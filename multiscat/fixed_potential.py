@@ -9,9 +9,8 @@ import numpy as np
 from multiscat.config import get_lobatto_points_for_config
 
 if TYPE_CHECKING:
-    from multiscat.basis import XYBasis
+    from multiscat.basis import LobattoBasis, XYBasis
     from multiscat.config import Config
-    from multiscat.lobatto import LobattoPoints
 
 
 @dataclass
@@ -19,7 +18,7 @@ class FixedPotential:
     """Represents a fixed potential, as loaded from the fourier file."""
 
     xy_basis: XYBasis
-    lobatto_basis: LobattoPoints
+    z_basis: LobattoBasis
     data: np.ndarray[tuple[Any, Any], np.dtype[np.complex128]]
 
 
@@ -71,25 +70,26 @@ def load_fixed_potential(
 
     # Scale to the program units
     potential *= config.rmlmda
-    lobatto_points = get_lobatto_points_for_config(config)
+    lobatto_basis = get_lobatto_points_for_config(config)
 
-    # Interpolate fourier componets at each nfc
+    # Interpolate fourier componets onto the lobatto basis
     interpolated = np.apply_along_axis(
         lambda d: np.interp(
-            lobatto_points.points,
+            lobatto_basis.points,
             np.linspace(
                 config.stepzmin,
                 config.stepzmax,
                 config.nzfixed,
                 endpoint=True,
-            ),
+            )
+            - config.zmin,
             d,
         ),
         0,
         potential,
     )
     return FixedPotential(
-        lobatto_basis=lobatto_points,
+        z_basis=lobatto_basis,
         data=interpolated.astype(np.complex128),
         xy_basis=config.xy_basis,
     )
