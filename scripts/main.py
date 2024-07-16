@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from multiscat.basis import get_lobatto_derivatives
 from multiscat.config import (
     NMAX,
     NVFCFIXED_MAX,
@@ -24,6 +23,14 @@ if TYPE_CHECKING:
     from multiscat.scattering_condition import ScatteringCondition
 
 
+def get_lobatto_derivative_matrix(
+    basis: LobattoBasis,
+) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
+    return np.array(
+        [p(basis.points) for p in basis.lobatto_points.derivative_polynomials],
+    )
+
+
 def get_lobatto_t_matrix(
     basis: LobattoBasis,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
@@ -33,7 +40,7 @@ def get_lobatto_t_matrix(
     "QUANTUM SCATTERING VIA THE LOG DERIVATIVE OF THE KOHN VARIATIONAL PRINCIPLE"
     D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
     """
-    derivatives = get_lobatto_derivatives(basis)
+    derivatives = get_lobatto_derivative_matrix(basis)
 
     # We make use of the formula
     # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)

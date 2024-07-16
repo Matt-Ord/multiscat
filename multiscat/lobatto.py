@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
+from typing import Self, cast
 
 import numpy as np
 import scipy.special
@@ -10,6 +12,29 @@ import scipy.special
 class LobattoPoints:
     points: np.ndarray[tuple[int], np.dtype[np.float64]]
     weights: np.ndarray[tuple[int], np.dtype[np.float64]]
+
+    @cached_property
+    def polynomials(self: Self) -> list[np.polynomial.Polynomial]:
+        domain = np.array([self.points[0], self.points[-1]])
+        polynomials = [
+            cast(
+                np.polynomial.Polynomial,
+                np.polynomial.Polynomial.fromroots(np.delete(self.points, i), domain),
+            )
+            for i in range(self.points.size)
+        ]
+        return [
+            polynomial / polynomial(point)
+            for (polynomial, point) in zip(polynomials, self.points, strict=True)
+        ]
+
+    @property
+    def weighted_polynomials(self: Self) -> list[np.polynomial.Polynomial]:
+        return [p * w for (p, w) in zip(self.polynomials, self.weights, strict=True)]
+
+    @cached_property
+    def derivative_polynomials(self: Self) -> list[np.polynomial.Polynomial]:
+        return [p.deriv() for p in self.polynomials]
 
 
 def _get_fundamental_lobatto(
