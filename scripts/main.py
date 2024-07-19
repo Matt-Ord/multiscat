@@ -12,7 +12,6 @@ from multiscat.config import (
     NZFIXED_MAX,
     Config,
     GMRESConfig,
-    print_config,
     read_config,
 )
 from multiscat.fixed_potential import load_fixed_potential
@@ -369,7 +368,9 @@ def upper(
     ivy: IntArray,
     nfc: int,
 ) -> None:
-    """Performs the block upper triangular matrix multiplication y = U*x, where A = L+U.
+    """Perform the block upper triangular matrix multiplication y = U*x.
+
+    A = L+U.
     The result y is overwritten on x on return.
     """
     for j in range(1, n + 1):
@@ -399,7 +400,9 @@ def lower(
     f: ComplexArray,
     t: ComplexArray,
 ) -> None:
-    """Solves the block lower triangular linear equation L*y = x, where A = L+U.
+    """Solves the block lower triangular linear equation L*y = x.
+
+    A = L+U.
     The result y is overwritten on x on return.
     """
     mmax = 200
@@ -439,12 +442,7 @@ def process_scattering_condition(
     # get reciprocal lattice points
     # (also calculate how many channels are required for the calculation)
     d = get_scattering_energy(potential.xy_basis, condition)
-    # TODO: write to output
-    # if out_file is not None:
-    #     with out_file.open("a") as f:
-    #         f.write(
-    #             f"Number of diffraction channels, n ={d.size}\n",
-    #         )
+    # TODO: write n diffaction channels output
 
     a = np.zeros(d.size, dtype=np.complex128)
     b = np.zeros(d.size, dtype=np.complex128)
@@ -486,7 +484,6 @@ def process_scattering_condition(
     )
 
     # TODO: write outputs
-    # output(ei, theta, phi, ix, iy, d.size, n00, d, p, config.itest)
 
 
 def process_potentials(
@@ -538,7 +535,7 @@ def main() -> None:
     config = read_config(Path(inputfile))
 
     # Print parameters
-    print_config(config)
+    print(config)
 
     process_potentials(config)
 

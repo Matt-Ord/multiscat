@@ -173,6 +173,7 @@ def test_lobatto_derivatives_against_explicit(random_n: int) -> None:
 
     polynomial_derivatives = np.array(
         [p(lobatto_points.points) for p in lobatto_points.derivative_polynomials],
+        dtype=np.float64,
     )
 
     derivatives = get_lobatto_derivatives_explicit(lobatto_points)

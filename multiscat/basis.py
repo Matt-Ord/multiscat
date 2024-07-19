@@ -59,7 +59,7 @@ class XYBasis:
         self: Self,
     ) -> tuple[np.ndarray[tuple[int], np.dtype[np.int_]], ...]:
         """Get the k points."""
-        return np.einsum("ij,il->lj", self.nk_points_stacked, self.dk_stacked)
+        return np.einsum("ij,il->lj", self.nk_points_stacked, self.dk_stacked)  # type: ignore unknown
 
 
 @dataclass
@@ -71,12 +71,15 @@ class LobattoBasis:
 
     @cached_property
     def lobatto_points(self: Self) -> LobattoPoints:
+        """Get the lobatto points."""
         return get_lobatto_points(self.n_points, (0, self.delta_x))
 
     @property
-    def points(self: Self):
+    def points(self: Self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+        """Get the points."""
         return self.lobatto_points.points
 
     @property
-    def weights(self: Self):
+    def weights(self: Self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+        """Get the weights."""
         return self.lobatto_points.weights

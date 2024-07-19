@@ -5,21 +5,24 @@ from functools import cached_property
 from typing import Self, cast
 
 import numpy as np
-import scipy.special
+import scipy.special  # type: ignore unknown
 
 
 @dataclass
 class LobattoPoints:
+    """Represents a lobatto shape function."""
+
     points: np.ndarray[tuple[int], np.dtype[np.float64]]
     weights: np.ndarray[tuple[int], np.dtype[np.float64]]
 
     @cached_property
     def polynomials(self: Self) -> list[np.polynomial.Polynomial]:
+        """Get the normalized polynomials."""
         domain = np.array([self.points[0], self.points[-1]])
         polynomials = [
             cast(
                 np.polynomial.Polynomial,
-                np.polynomial.Polynomial.fromroots(np.delete(self.points, i), domain),
+                np.polynomial.Polynomial.fromroots(np.delete(self.points, i), domain),  # type: ignore bad library type
             )
             for i in range(self.points.size)
         ]
@@ -30,11 +33,13 @@ class LobattoPoints:
 
     @property
     def weighted_polynomials(self: Self) -> list[np.polynomial.Polynomial]:
+        """Get the weighted polynomials."""
         return [p * w for (p, w) in zip(self.polynomials, self.weights, strict=True)]
 
     @cached_property
     def derivative_polynomials(self: Self) -> list[np.polynomial.Polynomial]:
-        return [p.deriv() for p in self.polynomials]
+        """Get the polynomial derivatives."""
+        return [p.deriv() for p in self.polynomials]  # type: ignore unknown
 
 
 def _get_fundamental_lobatto(

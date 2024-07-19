@@ -23,6 +23,8 @@ NFCX = 4096  # max number of potential fourier components per z slice
 
 @dataclass
 class GMRESConfig:
+    """Represents options for the GMRES solver."""
+
     precision: float
     preconditioner: int
 
@@ -104,7 +106,27 @@ class Config:
 
     @property
     def gmres_config(self: Self) -> GMRESConfig:
+        """Get the gmres config."""
         return GMRESConfig(precision=self.eps, preconditioner=self.ipc)
+
+    def __str__(self: Self) -> str:
+        """Return the Config as a string."""
+        out = ""
+        out += f"Fourier labels file = {self.fourier_labels_file}\n"
+        out += f"Loading scattering conditions from {self.scatt_cond_file}\n"
+        out += f"Output mode = {self.itest}\n"
+        out += f"GMRES preconditioner flag = {self.ipc}\n"
+        out += f"Convergence sig. figures = {self.nsf}\n"
+        out += f"Total number of Fourier components to use = {self.nfc}\n"
+        out += f"z integration range = ({self.zmin}, {self.zmax})\n"
+        out += f"Max energy of closed channels = {self.dmax}\n"
+        out += f"Max index of channels = {self.imax}\n"
+        out += f"Unit cell (A) = {self.a1} x {self.b2}\n"
+        out += f"Number of z points in Fourier components (nzfixed) = {self.nzfixed}\n"
+        out += f"Calculating for potential input files between {self.startindex}.in"
+        out += f"and {self.endindex}.in\n"
+        out += f"Atom Mass = {self.he_mass}"
+        return out
 
 
 def get_lobatto_points_for_config(
@@ -168,23 +190,3 @@ def read_config(file_path: Path) -> Config:
         endindex=endindex,
         he_mass=he_mass,
     )
-
-
-def print_config(config: Config) -> None:
-    # TODO: as __str__ impl
-    print(f"Fourier labels file = {config.fourier_labels_file}")
-    print(f"Loading scattering conditions from {config.scatt_cond_file}")
-    print(f"Output mode = {config.itest}")
-    print(f"GMRES preconditioner flag = {config.ipc}")
-    print(f"Convergence sig. figures = {config.nsf}")
-    print(f"Total number of Fourier components to use = {config.nfc}")
-    print(f"z integration range = ({config.zmin}, {config.zmax})")
-    print(f"Max energy of closed channels = {config.dmax}")
-    print(f"Max index of channels = {config.imax}")
-    print(f"Unit cell (A) = {config.a1} x {config.b2}")
-    print(f"Number of z points in Fourier components (nzfixed) = {config.nzfixed}")
-    print(
-        f"Calculating for potential input files between {config.startindex}.in"
-        f"and {config.endindex}.in",
-    )
-    print(f"Atom Mass = {config.he_mass}")
