@@ -59,7 +59,7 @@ def _get_fundamental_lobatto(
     # Weight relative to ends is P(n-1)(point)^-2
     inner_weights = inner_polynomial(inner_points) ** (-2)
 
-    points = np.concat([[-1], inner_points, [1]])
+    points = np.concat([[-1], inner_points, [1]]).astype(np.float64)
     weights = (2 / (n * (n - 1))) * np.concat([[1], inner_weights, [1]])
 
     return LobattoPoints(points=points, weights=weights)
