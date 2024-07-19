@@ -4,14 +4,17 @@ import numpy as np
 from multiscat.lobatto import get_lobatto_points
 
 if __name__ == "__main__":
-    # Ok up until around 35 points...
-    # Need to consider if this is the best implimentation...
-    lobatto_points = get_lobatto_points(40, (0, 2))
+    # Ok up until around 35 points
+    # This is due to an issue with finding the Legendre derivative roots
+    lobatto_points = get_lobatto_points(35, (-1, 1))
 
     fig, ax = plt.subplots()
+
+    fig1, ax1 = plt.subplots()
     points = np.linspace(lobatto_points.points[0], lobatto_points.points[-1], 10000)
-    points = lobatto_points.points
+
     for polynomial in lobatto_points.polynomials:
         ax.plot(points, polynomial(points))
     fig.show()
+    fig1.show()
     input()

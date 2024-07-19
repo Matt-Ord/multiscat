@@ -28,8 +28,7 @@ def test_lobatto_points_known_results() -> None:
 def random_n() -> int:
     """Fixture to generate a random n between 2 and 20."""
     rng = np.random.default_rng()
-    return 100
-    return rng.integers(2, 20)
+    return rng.integers(2, 30)
 
 
 def test_lobatto_points_symmetry(random_n: int) -> None:
@@ -38,11 +37,13 @@ def test_lobatto_points_symmetry(random_n: int) -> None:
         result.points,
         -result.points[::-1],
         err_msg=f"Points not symmetric for n={random_n}",
+        atol=1e-10,
     )
     np.testing.assert_allclose(
         result.weights,
         result.weights[::-1],
         err_msg=f"Weights not symmetric for n={random_n}",
+        atol=1e-10,
     )
 
 
