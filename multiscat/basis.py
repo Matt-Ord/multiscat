@@ -22,6 +22,12 @@ class XYBasis:
     shape: tuple[int, int]
 
     @property
+    def n(
+        self: Self,
+    ) -> int:
+        return np.prod(self.shape).item()
+
+    @property
     def dk_stacked(
         self: Self,
     ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:

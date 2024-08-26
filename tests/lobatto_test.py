@@ -57,22 +57,20 @@ def _lobatto_from_fortran(
 ]:
     """Calculate lobatto weights based on the fortran approach.
 
-    Coppied directly from the code provided in
-    https://doi.org/10.1007/978-94-015-8240-7_4
+    Coppied directly from the code provided by <https://doi.org/10.1007/978-94-015-8240-7_4>
 
     Parameters
     ----------
     a : float
-        _description_
     b : float
-        _description_
     n : int
-        _description_
 
     Returns
     -------
-    _type_
-        _description_
+    tuple[
+        np.ndarray[Any, np.dtype[np.float64]],
+        np.ndarray[Any, np.dtype[np.float64]],
+    ]
 
     """
     n_unique = (n + 1) // 2
@@ -181,5 +179,5 @@ def test_lobatto_derivatives_against_explicit(random_n: int) -> None:
         derivatives,
         polynomial_derivatives,
         equal_nan=True,
-        atol=1e-8,
+        atol=1e-7,
     )

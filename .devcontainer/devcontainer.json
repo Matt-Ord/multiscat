@@ -48,7 +48,9 @@
 				],
 				"cSpell.ignoreWords": [
 					"esbenp",
-					"tamasfe"
+					"tamasfe",
+					"hbar",
+					"astype"
 				],
 				"cSpell.words": [
 					"dtype",

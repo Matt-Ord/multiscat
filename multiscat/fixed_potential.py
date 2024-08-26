@@ -19,6 +19,7 @@ class FixedPotential:
 
     xy_basis: XYBasis
     z_basis: LobattoBasis
+    """data indexed as [n_x, n_k_xy]"""
     data: np.ndarray[tuple[Any, Any], np.dtype[np.complex128]]
 
 
@@ -42,7 +43,7 @@ def load_fixed_potential(
 ) -> FixedPotential:
     xy_basis = config.xy_basis
     potential = np.zeros(
-        (config.nzfixed, np.prod(xy_basis.shape)),
+        (config.n_z_fixed, np.prod(xy_basis.shape)),
         dtype=np.complex128,
     )
 
@@ -57,7 +58,7 @@ def load_fixed_potential(
         # Loop over fourier components
         for kx, ky in zip(ivx, ivy):
             # Loop over z values in fourier components
-            for j in range(config.nzfixed):
+            for j in range(config.n_z_fixed):
                 line = file.readline().strip()
                 real, imag = map(float, line.strip("()").split(","))
                 i = np.argwhere(
@@ -77,12 +78,12 @@ def load_fixed_potential(
         lambda d: np.interp(
             lobatto_basis.points,
             np.linspace(
-                config.stepzmin,
-                config.stepzmax,
-                config.nzfixed,
+                config.step_z_min,
+                config.step_z_max,
+                config.n_z_fixed,
                 endpoint=True,
             )
-            - config.zmin,
+            - config.z_min,
             d,
         ),
         0,
