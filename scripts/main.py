@@ -7,12 +7,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from multiscat.config import (
-    NMAX,
-    NVFCFIXED_MAX,
-    NZFIXED_MAX,
+    N_MAX,
+    N_VFC_FIXED_MAX,
+    N_Z_FIXED_MAX,
     Config,
     GMRESConfig,
-    print_config,
     read_config,
 )
 from multiscat.fixed_potential import load_fixed_potential
@@ -31,7 +30,7 @@ def get_lobatto_derivative_matrix(
     )
 
 
-def get_lobatto_t_matrix(
+def get_t_matrix_discreet_variable_representation(
     basis: LobattoBasis,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     """Calculate the kinetic energy matrix, T, in a normalized Lobatto basis.
@@ -46,6 +45,59 @@ def get_lobatto_t_matrix(
     # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
     # to calculate the kinetic matrix T_ij
     return np.einsum("k,ik,jk->ij", basis.weights, derivatives, derivatives)  # type: ignore einsum
+
+
+def get_k_matrix(
+    potential: FixedPotential,
+    condition: ScatteringCondition,
+) -> np.ndarray[Any, np.dtype[np.complex128]]:
+    r"""Calculate the K matrix.
+
+    this is done according to the formula defined in.
+
+    K_{ij} = \int_0^s dr u'(r)_i U'(r)_j + U_i(r)[V(r)-k^2]u_j(r)
+
+    Returns
+    -------
+    np.ndarray[Any, np.dtype[np.complex128]]
+        _description_
+
+    """
+    # T_ij = \int_0^s dr u'(r)_i U'(r)_j
+    t_matrix = get_t_matrix_discreet_variable_representation(potential.z_basis)
+    # TODO: scale by omega?
+    # V_ij = \int_0^s dr u(r)_i U(r)_j V(r)
+    v_matrix = np.diag(potential.data[:, 0])
+    incoming_energy = condition.energy * potential.z_basis.weights
+    return t_matrix + (v_matrix - incoming_energy)
+
+
+def process_scattering_condition_non_reactive(
+    potential: FixedPotential,
+    condition: ScatteringCondition,
+) -> None:
+    k_matrix = get_k_matrix(potential, condition)
+    k_00 = k_matrix[0, 0]
+    k_01 = k_matrix[0, 1:]
+    k_11 = k_matrix[1:, 1:]
+    k_11_inv = np.linalg.inv(k_11)
+    k_10 = k_matrix[1:, 0]
+
+    y = k_00 - np.einsum("ij,jk,kl->il", k_01, k_11_inv, k_10)
+
+    i_s = condition.momentum**-0.5 * np.exp(
+        -1j * condition.momentum * potential.z_basis.delta_x,
+    )
+    o_s = condition.momentum**-0.5 * np.exp(
+        1j * condition.momentum * potential.z_basis.delta_x,
+    )
+    i_s_deriv = -1j * condition.momentum * i_s
+    o_s_deriv = 1j * condition.momentum * o_s
+    return np.einsum(
+        "ij,jk->ik",
+        np.linalg.inv(y * o_s - o_s_deriv),
+        (y * i_s - i_s_deriv),
+    )
 
 
 def get_scattering_energy(
@@ -72,45 +124,67 @@ def get_scattering_energy(
     return e_int - abs_squared_k
 
 
-def waves(
+def _get_a(
+    scattered_energy_difference: np.ndarray[tuple[int], np.dtype[np.float64]],
     zmax: float,
-    w0: float,
-) -> tuple[complex, complex, complex]:
-    """Construct and store the diagonal matrices a, b, and c.
+) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+    # a(r) = i(r)o(r)^-1
+    # where o(r) = k^-1/2 h_0(1)(kr)
+    # where i(r) = k^-1/2 h_0(2)(kr)
+    # h_l(1/2)(x) = e^(+-ix) for l = 0
+    # a(r) = e^(-2ik.x)
 
-    As defined in the the log derivative Kohn expression for the S-matrix.
+    return np.exp(-1j * 2.0 * zmax * np.lib.scimath.sqrt(scattered_energy_difference))
 
-    Parameters
-    ----------
-    w0 (float): Input value w0.
-    zmax (float): Maximum value of z.
 
-    Returns
-    -------
-    Tuple[np.complex128, np.complex128, np.complex128]:
-        - a (np.complex128): Diagonal matrix a.
-        - b (np.complex128): Diagonal matrix b.
-        - c (np.complex128): Diagonal matrix c.
+def _get_b(
+    scattered_energy_difference: np.ndarray[tuple[int], np.dtype[np.float64]],
+    zmax: float,
+) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+    # b(r) = o(r)^-1
+    # where o(r) = k^-1/2 h_0(1)(kr)
+    # h_l(1/2)(x) = e^(+-ix) for l = 0
+    dk = np.lib.scimath.sqrt(scattered_energy_difference)
+    theta = dk * zmax
+    return (np.abs(dk) ** 0.5) * np.exp(-1j * theta)
 
-    """
-    dk = np.sqrt(abs(w0))
 
-    if w0 < 0.0:
-        theta = dk * zmax
-        bcc = np.cos(2.0 * theta)
-        bcs = np.sin(2.0 * theta)
-        cc = np.cos(theta)
-        cs = np.sin(theta)
+def _get_c(
+    scattered_energy_difference: np.ndarray[tuple[int], np.dtype[np.float64]],
+) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+    # c(r) = o'(r)o(r)^-1
+    # where o(r) = k^-1/2 h_0(1)(kr)
+    # h_l(1/2)(x) = x(J_l(x) +/- iY_l(x))
+    # c(r) = -i*k
 
-        a = complex(bcc, -bcs)
-        b = (dk**0.5) * complex(cc, -cs)
-        c = complex(0.0, dk)
-        return a, b, c
+    return -1j * np.lib.scimath.sqrt(scattered_energy_difference)
 
-    a = complex(0.0, 0.0)
-    b = complex(0.0, 0.0)
-    c = complex(-dk, 0.0)
 
+def get_abc_in_basis(
+    xy_basis: XYBasis,
+    lobatto_basis: LobattoBasis,
+    condition: ScatteringCondition,
+) -> tuple[
+    np.ndarray[tuple[int], np.dtype[np.complex128]],
+    np.ndarray[tuple[int], np.dtype[np.complex128]],
+    np.ndarray[tuple[int], np.dtype[np.complex128]],
+]:
+    d = get_scattering_energy(xy_basis, condition)
+
+    a = np.zeros(xy_basis.n, dtype=np.complex128)
+    b = np.zeros(xy_basis.n, dtype=np.complex128)
+
+    # TODO: is is sqrt omega here, and is it n-1 elements...
+    # why omega mz - i think it is omega[-1], and we should have discarded z=0
+    # state as the wavefunction is zero here!
+    w = lobatto_basis.weights
+    z_max = lobatto_basis.points[-1]
+
+    mz = lobatto_basis.points.size - 1
+
+    b = _get_a(d, z_max)
+    b = _get_b(d, z_max) / w[mz]
+    c = _get_c(d) / (w[mz] ** 2)
     return a, b, c
 
 
@@ -222,9 +296,9 @@ def gmres(
     n00: int,
     vfc: ComplexArray,
     nfc: int,
-    _a: ComplexArray,
-    _b: ComplexArray,
-    _c: ComplexArray,
+    a: ComplexArray,
+    b: ComplexArray,
+    c: ComplexArray,
     d: DoubleArray,
     e: DoubleArray,
     f: ComplexArray,
@@ -232,7 +306,7 @@ def gmres(
     eps: float,
     ipc: int,
 ) -> ComplexArray:
-    """Complex Generalised Minimal Residual Algorithm (GMRES) subroutine."""
+    """Complex Generalized Minimal Residual Algorithm (GMRES) subroutine."""
     # Setup constants
     l = 2000  # parameter (l = 2000)
     h = np.zeros((l + 1, l + 1), dtype=np.complex128)
@@ -248,7 +322,7 @@ def gmres(
     # Setup for GMRES(l)
     mn = m * n
     x = np.zeros(mn, dtype=np.complex128)
-    s = np.zeros(NMAX, dtype=np.complex128)
+    s = np.zeros(N_MAX, dtype=np.complex128)
 
     # Initial step
     kount = 0
@@ -369,7 +443,9 @@ def upper(
     ivy: IntArray,
     nfc: int,
 ) -> None:
-    """Performs the block upper triangular matrix multiplication y = U*x, where A = L+U.
+    """Perform the block upper triangular matrix multiplication y = U*x.
+
+    A = L+U.
     The result y is overwritten on x on return.
     """
     for j in range(1, n + 1):
@@ -399,7 +475,9 @@ def lower(
     f: ComplexArray,
     t: ComplexArray,
 ) -> None:
-    """Solves the block lower triangular linear equation L*y = x, where A = L+U.
+    """Solves the block lower triangular linear equation L*y = x.
+
+    A = L+U.
     The result y is overwritten on x on return.
     """
     mmax = 200
@@ -434,30 +512,14 @@ def process_scattering_condition(
 ) -> None:
     lobatto_basis = potential.z_basis
     mz = lobatto_basis.points.size - 1
-    t_matrix = get_lobatto_t_matrix(lobatto_basis)
+    t_matrix = get_t_matrix_discreet_variable_representation(lobatto_basis)
 
     # get reciprocal lattice points
     # (also calculate how many channels are required for the calculation)
     d = get_scattering_energy(potential.xy_basis, condition)
-    # TODO: write to output
-    # if out_file is not None:
-    #     with out_file.open("a") as f:
-    #         f.write(
-    #             f"Number of diffraction channels, n ={d.size}\n",
-    #         )
+    # TODO: write n diffaction channels output
 
-    a = np.zeros(d.size, dtype=np.complex128)
-    b = np.zeros(d.size, dtype=np.complex128)
-    c = np.zeros(d.size, dtype=np.complex128)
-
-    # TODO: is is sqrt omega here, and is it n-1 elements...
-    w = lobatto_basis.weights
-    z_max = lobatto_basis.points[-1]
-    for i in range(d.size):
-        a[i], b[i], c[i] = waves(z_max, d[i])
-        b[i] = b[i] / w[mz]
-        c[i] = c[i] / (w[mz] ** 2)
-
+    a, b, c = get_abc_in_basis(potential.xy_basis, lobatto_basis, condition)
     e, v, f = precon(
         mz,
         d.size,
@@ -486,13 +548,12 @@ def process_scattering_condition(
     )
 
     # TODO: write outputs
-    # output(ei, theta, phi, ix, iy, d.size, n00, d, p, config.itest)
 
 
 def process_potentials(
     config: Config,
 ) -> None:
-    np.zeros((NZFIXED_MAX, NVFCFIXED_MAX), dtype=np.complex128)
+    np.zeros((N_Z_FIXED_MAX, N_VFC_FIXED_MAX), dtype=np.complex128)
 
     for index in range(config.startindex, config.endindex + 1):
         fourier_file = Path(f"pot{index:05d}.in")
@@ -503,7 +564,7 @@ def process_potentials(
                 f.write(f"Diffraction intensities for potential: {fourier_file}\n")
 
         # TODO: Calculate scattering over the incident conditions required
-        print("")
+        print()
         print(f"Calculating scattering for potential: {fourier_file}")
         print("Energy / meV    Theta / deg    Phi / deg        I00         Sum")
 
@@ -538,7 +599,7 @@ def main() -> None:
     config = read_config(Path(inputfile))
 
     # Print parameters
-    print_config(config)
+    print(config)
 
     process_potentials(config)
 

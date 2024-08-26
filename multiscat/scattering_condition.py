@@ -23,10 +23,12 @@ class ScatteringCondition:
 
     @property
     def theta_radians(self: Self) -> float:
+        """Get the angle theta in radians."""
         return self.theta * np.pi / 180.0
 
     @property
     def phi_radians(self: Self) -> float:
+        """Get the angle phi in radians."""
         return self.phi * np.pi / 180.0
 
     @property
