@@ -14,8 +14,8 @@ $$
 
 where $V(\mathbf{r})$ is the potential energy of the atom at position $\mathbf{r}$.
 
-Since we are dealing with non reactive scattering, we want to find the states for the
-scattering wavefunction does not change with time, and enters the surface with a
+Since we are dealing with non reactive scattering, we want to find a steady state
+solution for the scattering wavefunction which enters the surface with a
 well defined momentum $\mathbf{k}$. In other words, we want to find the
 eigenstates of this equation which satisfy
 
@@ -42,7 +42,7 @@ V(\mathbf{r}, z) = \sum_{\mathbf{G}} V_{\mathbf{G}}(z) e^{i \mathbf{G} \cdot \ma
 $$
 
 $$
-\Psi(\mathbf{r}, z) = \sum_{\mathbf{G}} \Psi_{\mathbf{G}}(z) e^{i (\mathbf{G} + \mathbf{K}) \cdot \mathbf{r}} e^{i \mathbf{k} \cdot \mathbf{r}}
+\Psi(\mathbf{r}, z) = \sum_{\mathbf{G}} \Psi_{\mathbf{G}}(z) e^{i (\mathbf{G} + \mathbf{K}) \cdot \mathbf{r}}
 $$
 
 where $\mathbf{G}$ are the reciprocal lattice vectors of the periodic surface,
@@ -100,6 +100,20 @@ See David Riley's Thesis Chapter 3.2 for an alternative formulation of this meth
 Up until now we have been vague about the representation for the
 wavefunction $\Psi_{\mathbf{G}}(z)$ at each channel. To perform
 these calculations we need to choose a basis to represent the wavefunction
-in the $z$ direction. The Lobatto basis is a good choice for this purpose ...
+in the $z$ direction. In multiscat we use the Lobatto basis, which turns
+out to be a really good choice for this purpose. The Lobatto functions are
+orthogonal, sample points more densely near the surface, and have simple
+cheap-to-calculate derivatives.
 
 ## The Log Derivative Method
+
+It is possible to solve the closed coupled equations directly, but this
+is poorly converging in general. In the case of surface scattering, we often
+find that it is more efficient to minimize a functional proportional to
+the log derivative matrix
+
+$$
+Y_{\mathbf{G}}(z) = \Psi'_{\mathbf{G}}(z)\Psi^{-1}_{\mathbf{G}}(z)
+$$
+
+Solving the closed coupled equations

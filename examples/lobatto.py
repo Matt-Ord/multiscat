@@ -9,8 +9,6 @@ if __name__ == "__main__":
     lobatto_points = get_lobatto_points(35, (-1, 1))
 
     fig, ax = plt.subplots()  # type: ignore unknown
-
-    fig1, ax1 = plt.subplots()  # type: ignore unknown
     points = np.linspace(
         lobatto_points.points[0],
         lobatto_points.points[-1],
@@ -21,5 +19,4 @@ if __name__ == "__main__":
     for polynomial in lobatto_points.polynomials:
         ax.plot(points, polynomial(points))  # type: ignore unknown
     fig.show()
-    fig1.show()
     input()
