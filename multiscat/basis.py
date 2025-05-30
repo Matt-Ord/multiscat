@@ -29,9 +29,9 @@ class XYBasis:
     @property
     def dk_stacked(
         self: Self,
-    ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
+    ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
         """Dk as a list of dk for each axis."""
-        return 2 * np.pi * np.linalg.inv(self.delta_x_stacked).T
+        return 2 * np.pi * np.linalg.inv(self.delta_x_stacked).T  # type: ignore shape-mismatch
 
     @property
     def nx_points_stacked(
@@ -46,7 +46,7 @@ class XYBasis:
 
     @staticmethod
     def _get_nk_points(n: int) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
-        return np.fft.ifftshift(np.arange((-n + 1) // 2, (n + 1) // 2))
+        return np.fft.ifftshift(np.arange((-n + 1) // 2, (n + 1) // 2))  # type: ignore shape-mismatch
 
     @property
     def nk_points_stacked(

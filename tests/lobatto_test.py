@@ -28,7 +28,7 @@ def test_lobatto_points_known_results() -> None:
 def random_n() -> int:
     """Fixture to generate a random n between 2 and 20."""
     rng = np.random.default_rng()
-    return rng.integers(2, 28)
+    return rng.integers(2, 28).item()
 
 
 def test_lobatto_points_symmetry(random_n: int) -> None:

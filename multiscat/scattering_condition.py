@@ -42,7 +42,7 @@ class ScatteringCondition:
     def momentum(self: Self) -> np.ndarray[tuple[Literal[3]], np.dtype[np.float64]]:
         """The momentum as a 3 vector (kx, ky, kz)."""
         k = self._abs_momentum
-        return k * np.array(
+        return k * np.array(  # type: ignore shape-mismatch
             [
                 np.sin(self.theta_radians) * np.cos(self.phi_radians),
                 np.sin(self.theta_radians) * np.sin(self.phi_radians),

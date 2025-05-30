@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Self
+from typing import Self, override
 
 import numpy as np
 
@@ -106,13 +106,14 @@ class Config:
             msg = "ERROR: n too big! (basis)"
             raise ValueError(msg)
         delta_x_stacked = np.array([[self.a1, self.a2], [0, self.b2]])
-        return XYBasis(delta_x_stacked, (n_points, n_points))
+        return XYBasis(delta_x_stacked, (n_points, n_points))  # type: ignore shape-mismatch
 
     @property
     def gmres_config(self: Self) -> GMRESConfig:
         """Get the gmres config."""
         return GMRESConfig(precision=self.eps, preconditioner=self.ipc)
 
+    @override
     def __str__(self: Self) -> str:
         """Return the Config as a string."""
         out = ""
