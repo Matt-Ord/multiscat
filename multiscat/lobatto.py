@@ -63,12 +63,12 @@ def _get_fundamental_lobatto(
     # n-1 th legendre polynomial
     inner_points = np.sort(inner_polynomial.deriv().roots)
     # Weight relative to ends is P(n-1)(point)^-2
-    inner_weights = inner_polynomial(inner_points) ** (-2)
+    inner_weights = inner_polynomial(inner_points) ** (-2)  # type: ignore library types
 
     points = np.concat([[-1], inner_points, [1]]).astype(np.float64)
-    weights = (2 / (n * (n - 1))) * np.concat([[1], inner_weights, [1]])
+    weights = (2 / (n * (n - 1))) * np.concat([[1], inner_weights, [1]])  # type: ignore library types
 
-    return LobattoPoints(points=points, weights=weights)
+    return LobattoPoints(points=points, weights=weights)  # type: ignore library types
 
 
 def get_lobatto_points(
@@ -82,6 +82,6 @@ def get_lobatto_points(
     scale = 0.5 * (b - a)
 
     return LobattoPoints(
-        points=scale * points.points + shift,
-        weights=scale * points.weights,
+        points=scale * points.points + shift,  # type: ignore library types
+        weights=scale * points.weights,  # type: ignore library types
     )

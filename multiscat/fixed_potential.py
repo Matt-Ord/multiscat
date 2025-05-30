@@ -91,6 +91,6 @@ def load_fixed_potential(
     )
     return FixedPotential(
         z_basis=lobatto_basis,
-        data=interpolated.astype(np.complex128),
+        data=interpolated.astype(np.complex128),  # type: ignore shape-mismatch
         xy_basis=config.xy_basis,
     )

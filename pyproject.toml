@@ -8,8 +8,12 @@ requires-python = ">=3.13,<4.0"
 dependencies = ["numpy>=2.0.0,<3.0.0", "scipy>=1.14.0,<2.0.0"]
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest>=8.2.2,<9.0.0", "matplotlib>=3.9.1,<4.0.0"]
-
+dev = [
+    "ruff",
+    "pyright ==1.1.400",
+    "pytest>=8.2.2,<9.0.0",
+    "matplotlib>=3.9.1,<4.0.0",
+]
 
 [tool.ruff]
 unsafe-fixes = true
@@ -26,6 +30,11 @@ unfixable = ["ERA001", "T201"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+include = ["tests", "multiscat", "examples"]
+reportImplicitOverride = true
 
 [build-system]
 requires = ["setuptools"]

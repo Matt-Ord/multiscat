@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def get_lobatto_derivative_matrix(
     basis: LobattoBasis,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
-    return np.array(
+    return np.array(  # type: ignore shape-mismatch
         [p(basis.points) for p in basis.lobatto_points.derivative_polynomials],
     )
 
@@ -97,7 +97,7 @@ def process_scattering_condition_non_reactive(
     o_s_deriv = 1j * condition.momentum * o_s
     return np.einsum(
         "ij,jk->ik",
-        np.linalg.inv(y * o_s - o_s_deriv),
+        np.linalg.inv(y * o_s - o_s_deriv),  # type: ignore library types
         (y * i_s - i_s_deriv),
     )
 
@@ -124,7 +124,7 @@ def get_scattering_energy(
     e_int = (pkx + kx) ** 2 + (pky + ky) ** 2
     # d is the difference between the initial energy
     # and the final energy
-    return e_int - abs_squared_k
+    return e_int - abs_squared_k  # type: ignore shape-mismatch
 
 
 def _get_a(
@@ -137,7 +137,7 @@ def _get_a(
     # h_l(1/2)(x) = e^(+-ix) for l = 0
     # a(r) = e^(-2ik.x)
 
-    return np.exp(-1j * 2.0 * zmax * np.lib.scimath.sqrt(scattered_energy_difference))
+    return np.exp(-1j * 2.0 * zmax * np.lib.scimath.sqrt(scattered_energy_difference))  # type: ignore shape-mismatch
 
 
 def _get_b(
@@ -149,7 +149,7 @@ def _get_b(
     # h_l(1/2)(x) = e^(+-ix) for l = 0
     dk = np.lib.scimath.sqrt(scattered_energy_difference)
     theta = dk * zmax
-    return (np.abs(dk) ** 0.5) * np.exp(-1j * theta)
+    return (np.abs(dk) ** 0.5) * np.exp(-1j * theta)  # type: ignore shape-mismatch
 
 
 def _get_c(
@@ -160,7 +160,7 @@ def _get_c(
     # h_l(1/2)(x) = x(J_l(x) +/- iY_l(x))
     # c(r) = -i*k
 
-    return -1j * np.lib.scimath.sqrt(scattered_energy_difference)
+    return -1j * np.lib.scimath.sqrt(scattered_energy_difference)  # type: ignore shape-mismatch
 
 
 def get_abc_in_basis(
@@ -355,17 +355,17 @@ def gmres(  # noqa: C901, PLR0912, PLR0913, PLR0915
     kk = 1
     for k in range(1, l + 1):
         kount += 1  # noqa: SIM113
-        x /= xnorm
+        x /= xnorm  # type: ignore unknown
         xx[:, k] = x[:]
         y[:] = x[:]
-        upper(x, m, ix, iy, n, vfc, ivx, ivy, nfc)
-        lower(x, m, ix, iy, n, vfc, ivx, ivy, nfc, c, d, e, f, t)
+        upper(x, m, ix, iy, n, vfc, ivx, ivy, nfc)  # type: ignore unknown
+        lower(x, m, ix, iy, n, vfc, ivx, ivy, nfc, c, d, e, f, t)  # type: ignore unknown
         x[:] = y[:] + x[:]
 
         if ipc == 1:
             y[:] = x[:]
-            upper(x, m, ix, iy, n, vfc, ivx, ivy, nfc)
-            lower(x, m, ix, iy, n, vfc, ivx, ivy, nfc, c, d, e, f, t)
+            upper(x, m, ix, iy, n, vfc, ivx, ivy, nfc)  # type: ignore unknown
+            lower(x, m, ix, iy, n, vfc, ivx, ivy, nfc, c, d, e, f, t)  # type: ignore unknown
             x[:] = y[:] - x[:]
 
         y[:] = xx[:, 0]
@@ -384,7 +384,7 @@ def gmres(  # noqa: C901, PLR0912, PLR0913, PLR0915
             s[i - 1] = (0.0 + 2.0j) * b[i - 1] * s[i - 1]
 
         s[n00] = a[n00] + s[n00]
-        xnorm = np.linalg.norm(x)
+        xnorm = np.linalg.norm(x)  # type: ignore unknown
         h[k, k - 1] = xnorm
 
         for j in range(1, k):
@@ -565,7 +565,7 @@ def process_potentials(
 
     for index in range(config.startindex, config.endindex + 1):
         fourier_file = Path(f"pot{index:05d}.in")
-        out_file = Path(f"diffrac{index:05d}.out") if config.itest == 1 else None
+        out_file = Path(f"diffrac{index:05d}.out") if config.i_test == 1 else None
 
         if out_file is not None:
             with out_file.open("a") as f:
