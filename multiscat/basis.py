@@ -22,9 +22,8 @@ class XYBasis:
     shape: tuple[int, int]
 
     @property
-    def n(
-        self: Self,
-    ) -> int:
+    def n(self: Self) -> int:
+        """The number of points in the basis."""
         return np.prod(self.shape).item()
 
     @property

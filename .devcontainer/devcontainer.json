@@ -3,10 +3,10 @@
 	"image": "mcr.microsoft.com/devcontainers/base:bullseye",
 	"features": {
 		"ghcr.io/devcontainers/features/python:1": {
-			"installTools": true,
-			"version": "3.12"
+			"version": "3.13"
 		},
-		"ghcr.io/devcontainers-contrib/features/poetry:2": {
+		"ghcr.io/va-h/devcontainers-features/uv:1": {
+			"shellautocompletion": true,
 			"version": "latest"
 		}
 	},
@@ -17,40 +17,29 @@
 				"editor.codeActionsOnSave": {
 					"source.fixAll": "always"
 				},
-				"[json]": {
-					"editor.defaultFormatter": "esbenp.prettier-vscode"
-				},
 				"[python]": {
 					"editor.defaultFormatter": "charliermarsh.ruff",
 					"editor.codeActionsOnSave": {
 						"source.fixAll": "always",
-						"source.organizeImports": "always"
-					},
-					"autoDocstring.docstringFormat": "numpy"
+						"source.organizeImports": "always",
+						"source.convertImportFormat": "always"
+					}
 				},
-				"python.analysis.diagnosticMode": "workspace",
-				"python.analysis.typeCheckingMode": "strict",
 				"python.testing.pytestArgs": [
 					"tests"
 				],
 				"python.testing.unittestEnabled": false,
 				"python.testing.pytestEnabled": true,
+				"python.analysis.diagnosticMode": "workspace",
 				"python.analysis.include": [
-					"multiscat",
-					"examples",
-					"tests"
+					"multiscat"
 				],
 				"python.analysis.autoImportCompletions": true,
 				"cSpell.allowCompoundWords": true,
 				"cSpell.flagWords": [
 					"hte",
-					"teh"
-				],
-				"cSpell.ignoreWords": [
-					"esbenp",
-					"tamasfe",
-					"hbar",
-					"astype"
+					"teh",
+					"hamiltonain"
 				],
 				"cSpell.words": [
 					"dtype",
@@ -67,9 +56,12 @@
 				"streetsidesoftware.code-spell-checker",
 				"tamasfe.even-better-toml",
 				"charliermarsh.ruff",
+				"peakchen90.open-html-in-browser",
+				"github.vscode-github-actions",
+				"GitHub.copilot",
 				"ms-python.vscode-pylance"
 			]
 		}
 	},
-	"onCreateCommand": "poetry install"
+	"onCreateCommand": "uv sync --all-extras"
 }

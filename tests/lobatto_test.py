@@ -55,7 +55,8 @@ def _lobatto_from_fortran(
     np.ndarray[Any, np.dtype[np.float64]],
     np.ndarray[Any, np.dtype[np.float64]],
 ]:
-    """Calculate lobatto weights based on the fortran approach.
+    """
+    Calculate lobatto weights based on the fortran approach.
 
     Coppied directly from the code provided by <https://doi.org/10.1007/978-94-015-8240-7_4>
 
@@ -122,7 +123,8 @@ def test_lobatto_points_against_fortran(random_n: int) -> None:
 def get_lobatto_derivatives_explicit(
     points: LobattoPoints,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
-    """Calculate the derivative matrix u_i'(R_j) for the lobatto basis.
+    """
+    Calculate the derivative matrix u_i'(R_j) for the lobatto basis.
 
     Parameters
     ----------

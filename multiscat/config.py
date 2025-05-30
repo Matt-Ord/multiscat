@@ -101,7 +101,7 @@ class Config:
     def xy_basis(self: Self) -> XYBasis:
         """Get the scattering conditions."""
         n_points = 1 + 2 * self.i_max
-        # TODO: previously this NMax was only for d < d max
+        # TODO: previously this NMax was only for d < d max  # noqa: FIX002
         if n_points**2 < N_MAX:
             msg = "ERROR: n too big! (basis)"
             raise ValueError(msg)

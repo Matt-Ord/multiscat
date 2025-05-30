@@ -21,7 +21,7 @@ class LobattoPoints:
         domain = np.array([self.points[0], self.points[-1]])
         polynomials = [
             cast(
-                np.polynomial.Polynomial,
+                "np.polynomial.Polynomial",
                 np.polynomial.Polynomial.fromroots(np.delete(self.points, i), domain),  # type: ignore bad library type
             )
             for i in range(self.points.size)
@@ -45,7 +45,8 @@ class LobattoPoints:
 def _get_fundamental_lobatto(
     n: int,
 ) -> LobattoPoints:
-    """Compute the weights and points for the gauss-lobatto quadrature in [-1,1].
+    """
+    Compute the weights and points for the gauss-lobatto quadrature in [-1,1].
 
     The n-2 free points are the roots of the n-1 Legendre polynomial P(x_i)
     The n-2 free weights are 2 / (n(n-1) * P(x_i)^2)

@@ -16,3 +16,7 @@ Cargo.lock
 **/__pycache__/**/*
 
 .vscode/**
+
+.ruff_cache
+.venv
+*.egg-info

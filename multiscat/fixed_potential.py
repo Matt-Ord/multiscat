@@ -56,7 +56,7 @@ def load_fixed_potential(
             next(file)
 
         # Loop over fourier components
-        for kx, ky in zip(ivx, ivy):
+        for kx, ky in zip(ivx, ivy, strict=False):
             # Loop over z values in fourier components
             for j in range(config.n_z_fixed):
                 line = file.readline().strip()

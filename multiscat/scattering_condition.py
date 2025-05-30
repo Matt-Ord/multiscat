@@ -11,7 +11,8 @@ if TYPE_CHECKING:
 
 @dataclass
 class ScatteringCondition:
-    """Represents a condition for a scattering calculation.
+    """
+    Represents a condition for a scattering calculation.
 
     Theta and phi are given in degrees
     """
@@ -33,7 +34,7 @@ class ScatteringCondition:
 
     @property
     def _abs_momentum(self: Self) -> float:
-        # TODO: what units is this in lol...
+        # TODO: what units is this in lol...  # noqa: FIX002
         hbar_squared = 4.18020
         return np.sqrt(2 * self.mass * self.energy / hbar_squared)
 
