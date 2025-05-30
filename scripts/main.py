@@ -33,7 +33,8 @@ def get_lobatto_derivative_matrix(
 def get_t_matrix_discreet_variable_representation(
     basis: LobattoBasis,
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
-    """Calculate the kinetic energy matrix, T, in a normalized Lobatto basis.
+    """
+    Calculate the kinetic energy matrix, T, in a normalized Lobatto basis.
 
     Formula for this are taken from:
     "QUANTUM SCATTERING VIA THE LOG DERIVATIVE OF THE KOHN VARIATIONAL PRINCIPLE"
@@ -51,7 +52,8 @@ def get_k_matrix(
     potential: FixedPotential,
     condition: ScatteringCondition,
 ) -> np.ndarray[Any, np.dtype[np.complex128]]:
-    r"""Calculate the K matrix.
+    r"""
+    Calculate the K matrix.
 
     this is done according to the formula defined in.
 
@@ -65,7 +67,7 @@ def get_k_matrix(
     """
     # T_ij = \int_0^s dr u'(r)_i U'(r)_j
     t_matrix = get_t_matrix_discreet_variable_representation(potential.z_basis)
-    # TODO: scale by omega?
+    # TODO: scale by omega?  # noqa: FIX002
     # V_ij = \int_0^s dr u(r)_i U(r)_j V(r)
     v_matrix = np.diag(potential.data[:, 0])
     incoming_energy = condition.energy * potential.z_basis.weights
@@ -104,14 +106,15 @@ def get_scattering_energy(
     basis: XYBasis,
     condition: ScatteringCondition,
 ) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-    """Get the matrix of scattered energies d.
+    """
+    Get the matrix of scattered energies d.
 
     Uses the formula
     d = |k in + k scatter|**2 - |k in|**2
     """
     pkx, pky, _pkz = condition.momentum
     abs_squared_k = np.linalg.norm(condition.momentum) ** 2
-    # TODO: previously we worked in a sparse basis in d
+    # TODO: previously we worked in a sparse basis in d # noqa: FIX002
     # such that di < config.dmax
     # These channels will only have a small scattering contribution
     # It might be good to do this too!
@@ -174,7 +177,7 @@ def get_abc_in_basis(
     a = np.zeros(xy_basis.n, dtype=np.complex128)
     b = np.zeros(xy_basis.n, dtype=np.complex128)
 
-    # TODO: is is sqrt omega here, and is it n-1 elements...
+    # TODO: is is sqrt omega here, and is it n-1 elements... # noqa: FIX002
     # why omega mz - i think it is omega[-1], and we should have discarded z=0
     # state as the wavefunction is zero here!
     w = lobatto_basis.weights
@@ -195,7 +198,8 @@ def precon(
     d: np.ndarray[Any, Any],
     t: np.ndarray[Any, Any],
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-    """Construct the matrix factors required for the block lower triangular preconditioner.
+    """
+    Construct the matrix factors required for the preconditioner.
 
     This is required for use in GMRES.
 
@@ -221,7 +225,8 @@ def precon(
         msg = "precon 1"
         raise ValueError(msg)
 
-    # Modify t to be H0 by adding the real part of vfc(k, nfc00) to its diagonal elements
+    # Modify t to be H0 by adding the real part of vfc(k, nfc00)
+    # to its diagonal elements
     h0 = t.copy()
     for k in range(m):
         h0[k, k] += np.real(vfc[k, nfc00])
@@ -250,7 +255,8 @@ IntArray = np.ndarray[Any, np.dtype[np.int64]]
 
 
 def zrotg(a: complex, b: complex) -> tuple[complex, complex, complex, complex]:
-    """Construct and perform a complex Givens rotation.
+    """
+    Construct and perform a complex Givens rotation.
 
     Parameters
     ----------
@@ -288,7 +294,7 @@ def zrotg(a: complex, b: complex) -> tuple[complex, complex, complex, complex]:
     return r, z, c, s
 
 
-def gmres(
+def gmres(  # noqa: C901, PLR0912, PLR0913, PLR0915
     m: int,
     ix: IntArray,
     iy: IntArray,
@@ -308,7 +314,7 @@ def gmres(
 ) -> ComplexArray:
     """Complex Generalized Minimal Residual Algorithm (GMRES) subroutine."""
     # Setup constants
-    l = 2000  # parameter (l = 2000)
+    l = 2000  # parameter (l = 2000)  # noqa: E741
     h = np.zeros((l + 1, l + 1), dtype=np.complex128)
     g = np.zeros(l + 1, dtype=np.complex128)
     z = np.zeros(l + 1, dtype=np.complex128)
@@ -348,7 +354,7 @@ def gmres(
     p = np.zeros(n, dtype=np.complex128)
     kk = 1
     for k in range(1, l + 1):
-        kount += 1
+        kount += 1  # noqa: SIM113
         x /= xnorm
         xx[:, k] = x[:]
         y[:] = x[:]
@@ -415,7 +421,7 @@ def gmres(
             kconv = 0
 
         kk = k
-        if kconv == 3 or xnorm == 0.0:
+        if kconv == 3 or xnorm == 0.0:  # noqa: PLR2004
             break
 
     # Back substitution for x
@@ -425,16 +431,16 @@ def gmres(
         x += y * z[j - 1]
 
     # All done?
-    if kconv < 3 and xnorm > 0.0:
+    if kconv < 3 and xnorm > 0.0:  # noqa: PLR2004
         pass
 
     # Yes!
     return p
 
 
-def upper(
+def upper(  # noqa: PLR0913
     x: ComplexArray,
-    m: int,
+    m: int,  # noqa: ARG001
     ix: IntArray,
     iy: IntArray,
     n: int,
@@ -443,7 +449,8 @@ def upper(
     ivy: IntArray,
     nfc: int,
 ) -> None:
-    """Perform the block upper triangular matrix multiplication y = U*x.
+    """
+    Perform the block upper triangular matrix multiplication y = U*x.
 
     A = L+U.
     The result y is overwritten on x on return.
@@ -451,7 +458,7 @@ def upper(
     for j in range(1, n + 1):
         x[:, j - 1] = 0.0j
         for i in range(j + 1, n + 1):
-            for l in range(1, nfc + 1):
+            for l in range(1, nfc + 1):  # noqa: E741
                 if ix[i - 1] + ivx[l - 1] != ix[j - 1]:
                     continue
                 if iy[i - 1] + ivy[l - 1] != iy[j - 1]:
@@ -459,7 +466,7 @@ def upper(
                 x[:, j - 1] += vfc[:, l - 1] * x[:, i - 1]
 
 
-def lower(
+def lower(  # noqa: PLR0913
     x: ComplexArray,
     m: int,
     ix: IntArray,
@@ -469,13 +476,14 @@ def lower(
     ivx: IntArray,
     ivy: IntArray,
     nfc: int,
-    c: ComplexArray,
+    c: ComplexArray,  # noqa: ARG001
     d: DoubleArray,
     e: DoubleArray,
-    f: ComplexArray,
+    f: ComplexArray,  # noqa: ARG001
     t: ComplexArray,
 ) -> None:
-    """Solves the block lower triangular linear equation L*y = x.
+    """
+    Solves the block lower triangular linear equation L*y = x.
 
     A = L+U.
     The result y is overwritten on x on return.
@@ -488,7 +496,7 @@ def lower(
 
     for j in range(1, n + 1):
         for i in range(1, j):
-            for l in range(1, nfc + 1):
+            for l in range(1, nfc + 1):  # noqa: E741
                 if ix[i - 1] + ivx[l - 1] != ix[j - 1]:
                     continue
                 if iy[i - 1] + ivy[l - 1] != iy[j - 1]:
@@ -497,7 +505,7 @@ def lower(
 
         for k in range(1, m + 1):
             y[k - 1] = 0.0j
-            for l in range(1, m + 1):
+            for l in range(1, m + 1):  # noqa: E741
                 y[k - 1] += x[l - 1, j - 1] * t[l - 1, k - 1]
             y[k - 1] /= d[j - 1] + e[k - 1]
 
@@ -517,7 +525,7 @@ def process_scattering_condition(
     # get reciprocal lattice points
     # (also calculate how many channels are required for the calculation)
     d = get_scattering_energy(potential.xy_basis, condition)
-    # TODO: write n diffaction channels output
+    # TODO: write n diffaction channels output  # noqa: FIX002
 
     a, b, c = get_abc_in_basis(potential.xy_basis, lobatto_basis, condition)
     e, v, f = precon(
@@ -547,7 +555,7 @@ def process_scattering_condition(
         config.preconditioner,
     )
 
-    # TODO: write outputs
+    # TODO: write outputs  # noqa: FIX002
 
 
 def process_potentials(
@@ -563,7 +571,7 @@ def process_potentials(
             with out_file.open("a") as f:
                 f.write(f"Diffraction intensities for potential: {fourier_file}\n")
 
-        # TODO: Calculate scattering over the incident conditions required
+        # TODO: Calculate scattering over the incident conditions  # noqa: FIX002
         print()
         print(f"Calculating scattering for potential: {fourier_file}")
         print("Energy / meV    Theta / deg    Phi / deg        I00         Sum")

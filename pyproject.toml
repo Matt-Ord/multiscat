@@ -1,27 +1,22 @@
-[tool.poetry]
+[project]
 name = "multiscat"
 version = "0.1.0"
 description = ""
-authors = ["Matthew Ord <matthew.ord1@gmail.com>"]
+authors = [{ name = "Matthew Ord", email = "matthew.ord1@gmail.com" }]
 readme = "README.md"
-packages = [{ include = "multiscat" }]
+requires-python = ">=3.13,<4.0"
+dependencies = ["numpy>=2.0.0,<3.0.0", "scipy>=1.14.0,<2.0.0"]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-numpy = "^2.0.0"
-scipy = "^1.14.0"
+[project.optional-dependencies]
+dev = ["ruff", "pytest>=8.2.2,<9.0.0", "matplotlib>=3.9.1,<4.0.0"]
 
-[tool.poetry.group.dev.dependencies]
-ruff = "^0.4.10"
-pytest = "^8.2.2"
-matplotlib = "^3.9.1"
 
 [tool.ruff]
 unsafe-fixes = true
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["D103", "D104", "D100", "D417", "TD003", "TD002"]
+ignore = ["D103", "D104", "D203", "D212", "D100", "D417", "TD003", "TD002"]
 unfixable = ["ERA001", "T201"]
 
 [tool.ruff.lint.extend-per-file-ignores]
@@ -33,5 +28,5 @@ unfixable = ["ERA001", "T201"]
 testpaths = ["tests"]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
