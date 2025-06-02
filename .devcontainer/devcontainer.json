@@ -36,6 +36,24 @@
 				],
 				"python.analysis.autoImportCompletions": true,
 				"cSpell.allowCompoundWords": true,
+				"python.analysis.packageIndexDepths": [
+					{
+						"name": "slate_core",
+						"depth": 3
+					},
+					{
+						"name": "slate_quantum",
+						"depth": 3
+					},
+					{
+						"name": "matplotlib",
+						"depth": 2
+					},
+					{
+						"name": "scipy",
+						"depth": 2
+					}
+				],
 				"cSpell.flagWords": [
 					"hte",
 					"teh",

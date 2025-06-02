@@ -5,7 +5,12 @@ description = ""
 authors = [{ name = "Matthew Ord", email = "matthew.ord1@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.13,<4.0"
-dependencies = ["numpy>=2.0.0,<3.0.0", "scipy>=1.14.0,<2.0.0"]
+dependencies = [
+    "numpy>=2.0.0,<3.0.0",
+    "scipy>=1.14.0,<2.0.0",
+    "slate_core @ git+https://github.com/Matt-Ord/slate.git@472c669",
+    "slate_quantum[sse_solver_py] @ git+https://github.com/Matt-Ord/slate_quantum.git@fd850ea",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -20,7 +25,17 @@ unsafe-fixes = true
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["D103", "D104", "D203", "D212", "D100", "D417", "TD003", "TD002"]
+ignore = [
+    "D103",
+    "D104",
+    "D107",
+    "D203",
+    "D212",
+    "D100",
+    "D417",
+    "TD003",
+    "TD002",
+]
 unfixable = ["ERA001", "T201"]
 
 [tool.ruff.lint.extend-per-file-ignores]

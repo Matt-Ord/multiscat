@@ -151,6 +151,8 @@ source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "scipy" },
+    { name = "slate-core" },
+    { name = "slate-quantum", extra = ["sse-solver-py"] },
 ]
 
 [package.optional-dependencies]
@@ -169,6 +171,8 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.2,<9.0.0" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scipy", specifier = ">=1.14.0,<2.0.0" },
+    { name = "slate-core", git = "https://github.com/Matt-Ord/slate.git?rev=472c669" },
+    { name = "slate-quantum", extras = ["sse-solver-py"], git = "https://github.com/Matt-Ord/slate_quantum.git?rev=fd850ea" },
 ]
 provides-extras = ["dev"]
 
@@ -368,6 +372,35 @@ sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
 ]
+
+[[package]]
+name = "slate-core"
+version = "0.0.2"
+source = { git = "https://github.com/Matt-Ord/slate.git?rev=472c669#472c66918d8b2413435dae76720531635d647cb3" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+
+[[package]]
+name = "slate-quantum"
+version = "0.0.1"
+source = { git = "https://github.com/Matt-Ord/slate_quantum.git?rev=fd850ea#fd850ea118f039a297793aa3d06a2e07711e858c" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "slate-core" },
+]
+
+[package.optional-dependencies]
+sse-solver-py = [
+    { name = "sse-solver-py" },
+]
+
+[[package]]
+name = "sse-solver-py"
+version = "0.1.0"
+source = { git = "https://github.com/Matt-Ord/sse_solver.git?subdirectory=sse_solver_py&rev=4dfda95#4dfda95a1df2d04bf4b96a9081467a1cf474f13f" }
 
 [[package]]
 name = "typing-extensions"
