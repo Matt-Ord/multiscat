@@ -1,6 +1,9 @@
 from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
+import scipy.sparse  # type: ignore[import-untyped]
+import scipy.sparse.linalg  # type: ignore[import-untyped]
 from slate_core import SimpleMetadata, TupleBasis, TupleMetadata
 from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
@@ -37,47 +40,6 @@ class ScatteringCondition:
         return self.potential.basis.metadata().children[0]
 
 
-def _get_parallel_kinetic_energy(
-    metadata: LobattoMetadata,
-) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
-    """
-    Get the matrix of parallel kinetic energies T.
-
-    Formula for this are taken from:
-    "QUANTUM SCATTERING VIA THE LOG DERIVATIVE OF THE KOHN VARIATIONAL PRINCIPLE"
-    D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
-    """
-    # We make use of the formula
-    # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
-    # to calculate the kinetic matrix T_ij
-    derivatives = get_lobatto_derivative_matrix(metadata)
-    return np.einsum("k,ik,jk->ij", metadata.weights, derivatives, derivatives)
-
-
-def _get_perpendicular_kinetic_difference(
-    incident_k: tuple[float, float, float],
-    metadata: TupleMetadata[
-        tuple[SpacedLengthMetadata, SpacedLengthMetadata],
-        AxisDirections,
-    ],
-) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
-    """
-    Get the matrix of scattered energies d.
-
-    Uses the formula
-    d^2 = |k in + k scatter|**2 - |k in|**2
-    """
-    # TODO: previously we worked in a sparse basis in d # noqa: FIX002
-    # such that di < config.dmax
-    # These channels will only have a small scattering contribution
-    # It might be good to do this too!
-    (kx, ky) = fundamental_stacked_k_points(metadata, offset=incident_k[:2])
-
-    # d is the difference between the initial energy
-    # and the final energy
-    return ((kx**2 + ky**2) - np.linalg.norm(incident_k) ** 2).ravel()
-
-
 type KineticDifferenceOperatorBasis[
     M0: SimpleMetadata,
     M1: SimpleMetadata,
@@ -89,7 +51,7 @@ type KineticDifferenceOperatorBasis[
             None,
         ]
     ],
-    OperatorMetadata[TupleMetadata[tuple[M0, M0, M1], E]],
+    OperatorMetadata[ScatteringBasisMetadata[M0, M1, E]],
 ]
 
 
@@ -106,6 +68,53 @@ def _get_kinetic_difference_operator_basis[
     return AsUpcast(contracted, TupleMetadata((metadata, metadata)))
 
 
+def _get_parallel_kinetic_energy[
+    M0: SimpleMetadata,
+    M1: LobattoMetadata,
+    E: AxisDirections,
+](
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
+    """
+    Get the matrix of parallel kinetic energies T.
+
+    Formula for this are taken from:
+    "QUANTUM SCATTERING VIA THE LOG DERIVATIVE OF THE KOHN VARIATIONAL PRINCIPLE"
+    D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
+    """
+    # We make use of the formula
+    # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
+    # to calculate the kinetic matrix T_ij
+    lobatto_metadata = metadata.children[2]
+    derivatives = get_lobatto_derivative_matrix(lobatto_metadata)
+    # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
+    # basis. Issue is that the array does not have and index for the perpendicular
+    # direction, so we cannot use existing ContractedBasis functionality
+    return np.einsum("k,ik,jk->ij", lobatto_metadata.weights, derivatives, derivatives)
+
+
+def _get_perpendicular_kinetic_difference[
+    M0: SpacedLengthMetadata,
+    M1: LobattoMetadata,
+    E: AxisDirections,
+](
+    incident_k: tuple[float, float, float],
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
+    """
+    Get the matrix of scattered energies d.
+
+    Uses the formula
+    d^2 = |k in + k scatter|**2 - |k in|**2
+    """
+    # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
+    # basis. Issue is that the array does not have and index for the parrallel
+    # direction, so we cannot use existing ContractedBasis functionality
+    metadata_x01, _ = get_split_scattering_metadata(metadata)
+    (kx, ky) = fundamental_stacked_k_points(metadata_x01, offset=incident_k[:2])
+    return ((kx**2 + ky**2) - np.linalg.norm(incident_k) ** 2).ravel()
+
+
 def get_kinetic_difference_operator[
     M0: SpacedLengthMetadata,
     M1: LobattoMetadata,
@@ -118,17 +127,12 @@ def get_kinetic_difference_operator[
     np.dtype[np.complexfloating],
 ]:
     """Get the matrix of kinetic energies minus the incident energy."""
-    metadata_x01, lobatto_metadata = get_split_scattering_metadata(metadata)
-
     # The parallel kinetic energy is the same for each bloch K, but is non-diagonal
     # in the lobatto basis
-    # TODO: slate should be clever enough to be ablt to efficiently # noqa: FIX002
-    # add two contracted operators with the same underlying basis
-    # If this was supported we could return "proper" Operator[] from this function
-    t_ij = _get_parallel_kinetic_energy(lobatto_metadata)
+    t_ij = _get_parallel_kinetic_energy(metadata)
     # The perpendicular kinetic energy difference is diagonal in bloch K, and is
     # the same for each lobatto basis function
-    d_i = _get_perpendicular_kinetic_difference(incident_k, metadata_x01)
+    d_i = _get_perpendicular_kinetic_difference(incident_k, metadata)
 
     # The resulting difference operator is diagonal in the two bloch K indices
     # and non-diagonal in the lobatto basis
@@ -162,12 +166,59 @@ def _get_scattered_state[
     This is a diagonal basis in the lobatto basis, and a tuple basis in the
     bloch K indices.
     """
-    msg = (
-        "This function is not implemented yet..."
-        "Please implement the GMRES solver to compute the scattered state."
+    state_metadata = potential.basis.metadata().children[0]
+    state_basis = close_coupling_basis(state_metadata)
+    nx, ny, nz = state_metadata.shape
+
+    potential_raw = potential.with_basis(
+        operator_basis(state_basis),
+    ).raw_data.reshape(
+        (nx * ny * nz, nx * ny * nz),
     )
-    raise NotImplementedError(
-        msg,
+    kinetic_raw = kinetic_difference.raw_data.reshape(
+        (nx, ny, nz, nz),
+    )
+
+    initial_state = np.zeros((nx, ny, nz), dtype=np.complexfloating)
+    initial_state[0, 0, 0] = 1.0
+
+    def matmul_hamiltonian(
+        state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
+    ) -> float:
+        """Cost function for the GMRES solver."""
+        # The cost function is the kinetic energy minus the potential energy
+        cost_kinetic = np.einsum(
+            "ijkl,ijl->",
+            kinetic_raw,
+            state.reshape((nx, ny, nz)),
+        )
+        cost_potential = np.einsum(
+            "ij,j->",
+            potential_raw,
+            state.ravel(),
+        )
+        return cost_kinetic + cost_potential
+
+    # TODO: to make gmres work 'well', we need to build the  # noqa: FIX002
+    # correct preconditioner
+    # In the future, we should also probably port this to a
+    # compiled language, or otherwise use some cython build
+    # to speed up the loop.
+    # Or we could use a more efficient approach (ML) to speed up the
+    # convergence of the solver.
+    data, _info = scipy.sparse.linalg.gmres(  # type: ignore[unknown]
+        A=scipy.sparse.linalg.LinearOperator(
+            shape=potential_raw.shape,
+            matvec=matmul_hamiltonian,  # type: ignore[call-arg]
+            dtype=np.complexfloating,
+        ),
+        b=initial_state.ravel(),
+        rtol=options.precision,
+        maxiter=options.max_iterations,
+    )
+    return State(
+        state_basis,
+        cast("np.ndarray[Any, np.dtype[np.complexfloating]]", data),
     )
 
 
