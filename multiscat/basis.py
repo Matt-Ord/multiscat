@@ -1,90 +1,147 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from functools import cached_property
-from typing import TYPE_CHECKING, Self
+from typing import Any, Never
 
 import numpy as np
+from slate_core import (
+    Basis,
+    Ctype,
+    FundamentalBasis,
+    SimpleMetadata,
+    TransformedBasis,
+    TupleBasis,
+    TupleMetadata,
+    basis,
+)
+from slate_core.basis import AsUpcast
+from slate_core.metadata import (
+    AxisDirections,
+    SpacedLengthMetadata,
+)
+from slate_quantum import Operator
+from slate_quantum.operator import DiagonalOperatorBasis, OperatorMetadata
 
-from multiscat.lobatto import get_lobatto_points
+from multiscat.lobatto import LobattoMetadata
 
-if TYPE_CHECKING:
-    from multiscat.lobatto import LobattoPoints
-
-
-@dataclass
-class XYBasis:
-    """Class to store the xy basis vectors."""
-
-    delta_x_stacked: np.ndarray[tuple[int, int], np.dtype[np.float64]]
-    """delta_x as a list of delta_x for each axis"""
-
-    shape: tuple[int, int]
-
-    @property
-    def n(self: Self) -> int:
-        """The number of points in the basis."""
-        return np.prod(self.shape).item()
-
-    @property
-    def dk_stacked(
-        self: Self,
-    ) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
-        """Dk as a list of dk for each axis."""
-        return 2 * np.pi * np.linalg.inv(self.delta_x_stacked).T  # type: ignore shape-mismatch
-
-    @property
-    def nx_points_stacked(
-        self: Self,
-    ) -> tuple[np.ndarray[tuple[int], np.dtype[np.int_]], ...]:
-        """Get the nx points."""
-        nx_mesh = np.meshgrid(
-            *[np.arange(0, n, dtype=int) for n in self.shape],
-            indexing="ij",
-        )
-        return tuple(nxi.ravel() for nxi in nx_mesh)
-
-    @staticmethod
-    def _get_nk_points(n: int) -> np.ndarray[tuple[int], np.dtype[np.int_]]:
-        return np.fft.ifftshift(np.arange((-n + 1) // 2, (n + 1) // 2))  # type: ignore shape-mismatch
-
-    @property
-    def nk_points_stacked(
-        self: Self,
-    ) -> tuple[np.ndarray[tuple[int], np.dtype[np.int_]], ...]:
-        """Get the nk points."""
-        nx_mesh = np.meshgrid(
-            *[self._get_nk_points(n) for n in self.shape],
-            indexing="ij",
-        )
-        return tuple(nxi.ravel() for nxi in nx_mesh)
-
-    @property
-    def k_points_stacked(
-        self: Self,
-    ) -> tuple[np.ndarray[tuple[int], np.dtype[np.int_]], ...]:
-        """Get the k points."""
-        return np.einsum("ij,il->lj", self.nk_points_stacked, self.dk_stacked)  # type: ignore unknown
+type ScatteringBasisMetadata[
+    M0: SimpleMetadata = SpacedLengthMetadata,
+    M1: SimpleMetadata = LobattoMetadata,
+    E: AxisDirections = AxisDirections,
+] = TupleMetadata[
+    tuple[M0, M0, M1],
+    E,
+]
 
 
-@dataclass
-class LobattoBasis:
-    """Represents an n-point lobatto basis."""
+def _get_vectors_perpendicular_to(
+    vector: np.ndarray[Any, np.dtype[np.floating]],
+) -> tuple[
+    np.ndarray[tuple[int], np.dtype[np.floating]],
+    np.ndarray[tuple[int], np.dtype[np.floating]],
+]:
+    assert vector.size == 3, "Vector must be a 3D vector."  # noqa: PLR2004, S101
+    guess = (
+        np.array([1, 0, 0]) if abs(vector[0]) > abs(vector[1]) else np.array([0, 1, 0])
+    )
+    v0 = guess - np.dot(guess, vector) * vector
+    v0 /= np.linalg.norm(v0)
+    return (v0, np.cross(vector, v0))  # type: ignore bad library type
 
-    n_points: int
-    delta_x: float
 
-    @cached_property
-    def lobatto_points(self: Self) -> LobattoPoints:
-        """Get the lobatto points."""
-        return get_lobatto_points(self.n_points, (0, self.delta_x))
+def _project_x01_axis_directions(
+    metadata: AxisDirections,
+) -> AxisDirections:
+    """
+    Project the axis directions from the scattering basis metadata.
 
-    @property
-    def points(self: Self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-        """Get the points."""
-        return self.lobatto_points.points
+    This is used to extract the axis directions from the metadata.
+    """
+    vx, vy, vz = metadata.vectors
+    v0, v1 = _get_vectors_perpendicular_to(vz)
 
-    @property
-    def weights(self: Self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-        """Get the weights."""
-        return self.lobatto_points.weights
+    a_plane = np.array([np.dot(vx, v0), np.dot(vx, v1)])
+    b_plane = np.array([np.dot(vy, v0), np.dot(vy, v1)])
+    return AxisDirections(vectors=(a_plane, b_plane))
+
+
+def split_scattering_metadata[
+    M0: SimpleMetadata,
+    M1: SimpleMetadata,
+](
+    metadata: ScatteringBasisMetadata[M0, M1, AxisDirections],
+) -> tuple[
+    TupleMetadata[tuple[M0, M0], AxisDirections],
+    M1,
+]:
+    """Split the scattering basis metadata into parallel and perpendicular parts."""
+    directions_x01 = _project_x01_axis_directions(metadata.extra)
+    return (
+        TupleMetadata(metadata.children[:2], directions_x01),
+        metadata.children[2],
+    )
+
+
+type CloseCouplingBasis[
+    M0: SimpleMetadata = SpacedLengthMetadata,
+    M1: SimpleMetadata = LobattoMetadata,
+    E: AxisDirections = AxisDirections,
+] = TupleBasis[
+    tuple[
+        AsUpcast[TransformedBasis[FundamentalBasis[M0]], M0],
+        AsUpcast[TransformedBasis[FundamentalBasis[M0]], M0],
+        FundamentalBasis[M1],
+    ],
+    E,
+]
+
+
+def close_coupling_basis[
+    M0: SimpleMetadata,
+    M1: SimpleMetadata,
+    E: AxisDirections,
+](
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+) -> CloseCouplingBasis[M0, M1, E]:
+    """
+    Get the closed coupling basis from the scattering basis metadata.
+
+    This is used to get the closed coupling basis from the metadata.
+    """
+    return TupleBasis(
+        (
+            basis.transformed_from_metadata(metadata.children[0]).upcast(),
+            basis.transformed_from_metadata(metadata.children[1]).upcast(),
+            basis.from_metadata(metadata.children[2]),
+        ),
+        metadata.extra,
+    )
+
+
+type ScatteringPotentialBasis[
+    M0: SimpleMetadata = SimpleMetadata,
+    M1: SimpleMetadata = SimpleMetadata,
+    E: AxisDirections = AxisDirections,
+    CT: Ctype[Never] = Ctype[Never],
+] = DiagonalOperatorBasis[
+    basis.AsUpcast[
+        TupleBasis[
+            tuple[FundamentalBasis[M0], FundamentalBasis[M0], FundamentalBasis[M1]],
+            E,
+        ],
+        ScatteringBasisMetadata[M0, M1, E],
+    ],
+    Basis[ScatteringBasisMetadata[M0, M1, E]],
+    CT,
+    OperatorMetadata[ScatteringBasisMetadata[M0, M1, E]],
+]
+
+type ScatteringPotential[
+    B: ScatteringPotentialBasis,
+    DT: np.dtype[np.generic] = np.dtype[np.complexfloating],
+] = Operator[B, DT]
+
+type ScatteringPotentialWithMetadata[
+    M0: SimpleMetadata = SpacedLengthMetadata,
+    M1: SimpleMetadata = LobattoMetadata,
+    E: AxisDirections = AxisDirections,
+] = ScatteringPotential[ScatteringPotentialBasis[M0, M1, E]]

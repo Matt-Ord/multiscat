@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from multiscat.lobatto import LobattoPoints, get_lobatto_points
+from multiscat.lobatto import LobattoMetadata, get_derivative_polynomials
 
 
 def test_lobatto_points_known_results() -> None:
@@ -19,8 +19,8 @@ def test_lobatto_points_known_results() -> None:
     }
 
     for n, (expected_points, expected_weights) in known_results.items():
-        result = get_lobatto_points(n)
-        np.testing.assert_allclose(result.points, expected_points, rtol=1e-5)
+        result = LobattoMetadata(n, 2)
+        np.testing.assert_allclose(result.values - 1, expected_points, rtol=1e-5)
         np.testing.assert_allclose(result.weights, expected_weights, rtol=1e-5)
 
 
@@ -32,10 +32,10 @@ def random_n() -> int:
 
 
 def test_lobatto_points_symmetry(random_n: int) -> None:
-    result = get_lobatto_points(random_n)
+    result = LobattoMetadata(random_n, 2.0)
     np.testing.assert_allclose(
-        result.points,
-        -result.points[::-1],
+        result.values - 1,
+        -(result.values[::-1] - 1),
         err_msg=f"Points not symmetric for n={random_n}",
         atol=2e-7,
     )
@@ -114,14 +114,14 @@ def _lobatto_from_fortran(
 
 
 def test_lobatto_points_against_fortran(random_n: int) -> None:
-    result = get_lobatto_points(random_n)
-    fortran_result = _lobatto_from_fortran(-1, 1, random_n)
-    np.testing.assert_allclose(result.points, fortran_result[0], atol=1e-8)
+    result = LobattoMetadata(random_n, 1)
+    fortran_result = _lobatto_from_fortran(0, 1, random_n)
+    np.testing.assert_allclose(result.values, fortran_result[0], atol=1e-8)
     np.testing.assert_allclose(result.weights, fortran_result[1], atol=1e-8)
 
 
 def get_lobatto_derivatives_explicit(
-    points: LobattoPoints,
+    points: LobattoMetadata,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     """
     Calculate the derivative matrix u_i'(R_j) for the lobatto basis.
@@ -140,10 +140,10 @@ def get_lobatto_derivatives_explicit(
     # or for j=\=i
     # u_i'(R_j) = (R_i - R_j)^-1 product_0^M+1 (R_j-R_k) / (R_i - R_k)
     # Where the product excludes k=j and k=i
-    n_points = points.points.size
+    n_points = points.values.size
 
     # Calculate the reciprocal of differences (R_i - R_j)^-1, ignoring the diagonal
-    diff = points.points[:, np.newaxis] - points.points[np.newaxis, :]
+    diff = points.values[:, np.newaxis] - points.values[np.newaxis, :]
     reciprocal_diff = np.where(diff != 0, 1.0 / diff, 0)
 
     # Calculate product_k=0^M+1 (R_j-R_k) / (R_i - R_k)
@@ -169,10 +169,10 @@ def get_lobatto_derivatives_explicit(
 
 
 def test_lobatto_derivatives_against_explicit(random_n: int) -> None:
-    lobatto_points = get_lobatto_points(random_n, (0, 2))
+    lobatto_points = LobattoMetadata(random_n, 2)
 
     polynomial_derivatives = np.array(
-        [p(lobatto_points.points) for p in lobatto_points.derivative_polynomials],
+        [p(lobatto_points.values) for p in get_derivative_polynomials(lobatto_points)],
         dtype=np.float64,
     )
 
