@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Any, cast
 
 import numpy as np
@@ -14,31 +13,18 @@ from slate_core.metadata.volume import fundamental_stacked_k_points
 from slate_quantum import Operator, State
 from slate_quantum.operator import OperatorMetadata, operator_basis
 
-from multiscat.config import GMRESConfig
-from multiscat.lobatto import (
+from multiscat.basis import (
     CloseCouplingBasis,
-    LobattoMetadata,
     ScatteringBasisMetadata,
     ScatteringPotentialWithMetadata,
     close_coupling_basis,
-    get_lobatto_derivative_matrix,
-    get_split_scattering_metadata,
+    split_scattering_metadata,
 )
-
-
-@dataclass
-class ScatteringCondition:
-    """Represents a particular scattering condition."""
-
-    mass: float
-    incident_k: tuple[float, float, float]
-    potential: ScatteringPotentialWithMetadata
-
-    @property
-    def metadata(self) -> ScatteringBasisMetadata:
-        """The metadata for the scattering state."""
-        return self.potential.basis.metadata().children[0]
-
+from multiscat.config import GMRESConfig, ScatteringCondition
+from multiscat.lobatto import (
+    LobattoMetadata,
+    get_lobatto_derivative_matrix,
+)
 
 type KineticDifferenceOperatorBasis[
     M0: SimpleMetadata,
@@ -110,7 +96,7 @@ def _get_perpendicular_kinetic_difference[
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that the array does not have and index for the parrallel
     # direction, so we cannot use existing ContractedBasis functionality
-    metadata_x01, _ = get_split_scattering_metadata(metadata)
+    metadata_x01, _ = split_scattering_metadata(metadata)
     (kx, ky) = fundamental_stacked_k_points(metadata_x01, offset=incident_k[:2])
     return ((kx**2 + ky**2) - np.linalg.norm(incident_k) ** 2).ravel()
 
@@ -222,11 +208,15 @@ def _get_scattered_state[
     )
 
 
-def get_scattered_state(
-    condition: ScatteringCondition,
+def get_scattered_state[
+    M0: SpacedLengthMetadata,
+    M1: LobattoMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
     *,
     options: GMRESConfig,
-) -> State[CloseCouplingBasis]:
+) -> State[CloseCouplingBasis[M0, M1, E]]:
     kinetic_difference = get_kinetic_difference_operator(
         condition.incident_k,
         condition.metadata,
