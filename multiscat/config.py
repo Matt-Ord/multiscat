@@ -28,6 +28,7 @@ class GMRESConfig:
 
     precision: float
     preconditioner: int
+    max_iterations: int = 1000
 
 
 @dataclass

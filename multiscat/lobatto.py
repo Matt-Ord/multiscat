@@ -90,11 +90,14 @@ def _project_x01_axis_directions(
     return AxisDirections(vectors=(a_plane, b_plane))
 
 
-def get_split_scattering_metadata(
-    metadata: ScatteringBasisMetadata,
+def get_split_scattering_metadata[
+    M0: SimpleMetadata,
+    M1: SimpleMetadata,
+](
+    metadata: ScatteringBasisMetadata[M0, M1, AxisDirections],
 ) -> tuple[
-    TupleMetadata[tuple[SpacedLengthMetadata, SpacedLengthMetadata], AxisDirections],
-    LobattoMetadata,
+    TupleMetadata[tuple[M0, M0], AxisDirections],
+    M1,
 ]:
     """
     Get the metadata for the split scattering basis.
