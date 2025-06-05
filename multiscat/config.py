@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 from slate_core.metadata import AxisDirections, SpacedLengthMetadata
 
 if TYPE_CHECKING:
-    from multiscat.basis import ScatteringBasisMetadata, ScatteringPotentialWithMetadata
+    from multiscat.basis import ScatteringBasisMetadata
+    from multiscat.interpolate import ScatteringOperator
     from multiscat.lobatto import LobattoMetadata
 
 
@@ -29,7 +30,7 @@ class ScatteringCondition[
 
     mass: float
     incident_k: tuple[float, float, float]
-    potential: ScatteringPotentialWithMetadata[M0, M1, E]
+    potential: ScatteringOperator[M0, M1, E]
 
     @property
     def metadata(self) -> ScatteringBasisMetadata[M0, M1, E]:

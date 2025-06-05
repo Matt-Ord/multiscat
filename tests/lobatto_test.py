@@ -34,8 +34,8 @@ def random_n() -> int:
 def test_lobatto_points_symmetry(random_n: int) -> None:
     result = LobattoMetadata(random_n, 2.0)
     np.testing.assert_allclose(
-        result.values - 1,
-        -(result.values[::-1] - 1),
+        result.values - 1.0,
+        -(result.values[::-1] - 1.0),
         err_msg=f"Points not symmetric for n={random_n}",
         atol=2e-7,
     )

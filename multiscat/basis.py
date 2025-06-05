@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Never
+from typing import Any
 
 import numpy as np
 from slate_core import (
-    Basis,
-    Ctype,
     FundamentalBasis,
     SimpleMetadata,
     TransformedBasis,
@@ -16,10 +14,9 @@ from slate_core import (
 from slate_core.basis import AsUpcast
 from slate_core.metadata import (
     AxisDirections,
+    LabelSpacing,
     SpacedLengthMetadata,
 )
-from slate_quantum import Operator
-from slate_quantum.operator import DiagonalOperatorBasis, OperatorMetadata
 
 from multiscat.lobatto import LobattoMetadata
 
@@ -31,6 +28,23 @@ type ScatteringBasisMetadata[
     tuple[M0, M0, M1],
     E,
 ]
+
+
+def scattering_metadata_from_stacked_delta_x(
+    vectors: tuple[np.ndarray[Any, np.dtype[np.floating]], ...],
+    shape: tuple[int, int, int],
+) -> ScatteringBasisMetadata:
+    """Get the metadata for a scattering basis from the vectors and spacing."""
+    delta_v = tuple(np.linalg.norm(v).item() for v in vectors)
+    normalized_vectors = tuple(v / dv for v, dv in zip(vectors, delta_v, strict=True))
+    return TupleMetadata(
+        (
+            SpacedLengthMetadata(shape[0], spacing=LabelSpacing(delta=delta_v[0])),
+            SpacedLengthMetadata(shape[1], spacing=LabelSpacing(delta=delta_v[1])),
+            LobattoMetadata(shape[2], delta_v[2]),
+        ),
+        AxisDirections(vectors=normalized_vectors),
+    )
 
 
 def _get_vectors_perpendicular_to(
@@ -103,9 +117,9 @@ def close_coupling_basis[
     metadata: ScatteringBasisMetadata[M0, M1, E],
 ) -> CloseCouplingBasis[M0, M1, E]:
     """
-    Get the closed coupling basis from the scattering basis metadata.
+    Get the close coupling basis from basis metadata.
 
-    This is used to get the closed coupling basis from the metadata.
+    This is the basis we use in the close coupling method.
     """
     return TupleBasis(
         (
@@ -115,33 +129,3 @@ def close_coupling_basis[
         ),
         metadata.extra,
     )
-
-
-type ScatteringPotentialBasis[
-    M0: SimpleMetadata = SimpleMetadata,
-    M1: SimpleMetadata = SimpleMetadata,
-    E: AxisDirections = AxisDirections,
-    CT: Ctype[Never] = Ctype[Never],
-] = DiagonalOperatorBasis[
-    basis.AsUpcast[
-        TupleBasis[
-            tuple[FundamentalBasis[M0], FundamentalBasis[M0], FundamentalBasis[M1]],
-            E,
-        ],
-        ScatteringBasisMetadata[M0, M1, E],
-    ],
-    Basis[ScatteringBasisMetadata[M0, M1, E]],
-    CT,
-    OperatorMetadata[ScatteringBasisMetadata[M0, M1, E]],
-]
-
-type ScatteringPotential[
-    B: ScatteringPotentialBasis,
-    DT: np.dtype[np.generic] = np.dtype[np.complexfloating],
-] = Operator[B, DT]
-
-type ScatteringPotentialWithMetadata[
-    M0: SimpleMetadata = SpacedLengthMetadata,
-    M1: SimpleMetadata = LobattoMetadata,
-    E: AxisDirections = AxisDirections,
-] = ScatteringPotential[ScatteringPotentialBasis[M0, M1, E]]

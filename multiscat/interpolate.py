@@ -1,17 +1,36 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
-from slate_core import TupleMetadata
+from slate_core import SimpleMetadata, TupleBasis, TupleMetadata, basis
+from slate_core.basis import AsUpcast, CroppedBasis
 from slate_quantum import Operator
+from slate_quantum.operator import position_operator_basis
 
-from multiscat.basis import ScatteringPotentialWithMetadata, close_coupling_basis
+from multiscat.basis import (
+    ScatteringBasisMetadata,
+    close_coupling_basis,
+)
 
 if TYPE_CHECKING:
-    from slate_core.metadata import AxisDirections, SpacedLengthMetadata
+    from slate_core.metadata import (
+        AxisDirections,
+        SpacedLengthMetadata,
+        SpacedVolumeMetadata,
+    )
+    from slate_quantum.operator import OperatorBasis
 
     from multiscat.lobatto import LobattoMetadata
+
+type ScatteringOperator[
+    M0: SimpleMetadata,
+    M1: SimpleMetadata,
+    E: AxisDirections,
+] = Operator[
+    OperatorBasis[ScatteringBasisMetadata[M0, M1, E]],
+    np.dtype[np.complexfloating],
+]
 
 
 def interpolate_potential[
@@ -19,27 +38,72 @@ def interpolate_potential[
     M1: LobattoMetadata,
     E: AxisDirections,
 ](
-    metadata: M1,
-    potential: ScatteringPotentialWithMetadata[M0, M1, E],
-) -> ScatteringPotentialWithMetadata[M0, M1, E]:
-    # This function is a placeholder for potential interpolation logic.
-    # The actual implementation would depend on the specific requirements
-    # and context of the application.
-    old_state_metadata = potential.basis.metadata().children[0]
-    state_metadata = TupleMetadata(
-        (old_state_metadata.children[0], old_state_metadata.children[1], metadata),
-        old_state_metadata.extra,
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+    potential: Operator[
+        OperatorBasis[SpacedVolumeMetadata],
+        np.dtype[np.complexfloating],
+    ],
+) -> ScatteringOperator[M0, M1, E]:
+    old_state_metadata = cast(
+        "ScatteringBasisMetadata[SpacedLengthMetadata]",
+        potential.basis.metadata().children[0],
     )
-    _state_basis = close_coupling_basis(state_metadata)
+    if metadata.extra != old_state_metadata.extra:
+        msg = (
+            "The AxisDirections of the potential must match the"
+            "interpolated AxisDirections."
+        )
+        raise ValueError(msg)
+    if (
+        metadata.children[0].delta != old_state_metadata.children[0].delta
+        or metadata.children[1].delta != old_state_metadata.children[1].delta
+    ):
+        msg = (
+            "The repeating unit cell of the potential"
+            "must match the repeat cell of the interpolation."
+        )
+        raise ValueError(msg)
 
-    msg = "Potential interpolation is not implemented yet. "
-    raise NotImplementedError(msg)
-    todo_basis = Never
-    z_points = potential.basis.metadata().children[0].children[2].values
+    # Convert the potential to V_{k0, k1, x3} basis
+    # This potential is indexed by momentum in the direction parallel to the
+    # surface, but is given as a set of evenly spaced points in the
+    # perpendicular direction.
+    converted = potential.with_basis(
+        position_operator_basis(close_coupling_basis(old_state_metadata)),
+    )
+    # We interpolate the potential to the new lobatto points in the z direction
+    # using np.interp.
     interpolated = np.apply_along_axis(
-        lambda d: np.interp(metadata.points, z_points, d),
-        0,
-        potential.with_basis(todo_basis).raw_data,
+        lambda d: np.interp(
+            metadata.children[2].values,
+            old_state_metadata.children[2].values,
+            d,
+        ),
+        2,
+        converted.raw_data.reshape(old_state_metadata.shape),
     )
 
-    return Operator(todo_basis, data=interpolated)
+    # The basis of the interpolated potential
+    # Parralel to the surface, we still have a transformed basis, but we may
+    # be interpolating onto a finer grid. We therefore have a cropped basis
+    # in the x and y directions.
+    # The z direction is still a fundamental basis.
+    outer_basis = TupleBasis(
+        (
+            CroppedBasis(
+                old_state_metadata.children[0].fundamental_size,
+                basis.transformed_from_metadata(metadata.children[0]),
+            ),
+            CroppedBasis(
+                old_state_metadata.children[1].fundamental_size,
+                basis.transformed_from_metadata(metadata.children[1]),
+            ),
+            basis.from_metadata(metadata.children[2]),
+        ),
+        metadata.extra,
+    )
+    out_basis = position_operator_basis(outer_basis)
+    return Operator(
+        AsUpcast(out_basis, TupleMetadata((metadata, metadata))),
+        interpolated.astype(np.complexfloating),
+    )
