@@ -8,8 +8,8 @@ requires-python = ">=3.13,<4.0"
 dependencies = [
     "numpy>=2.0.0,<3.0.0",
     "scipy>=1.14.0,<2.0.0",
-    "slate_core @ git+https://github.com/Matt-Ord/slate.git@f254a71",
-    "slate_quantum[sse_solver_py] @ git+https://github.com/Matt-Ord/slate_quantum.git@cf8db09",
+    "slate_core @ git+https://github.com/Matt-Ord/slate.git@c2e6210",
+    "slate_quantum[sse_solver_py] @ git+https://github.com/Matt-Ord/slate_quantum.git@5229c07",
 ]
 
 [project.optional-dependencies]

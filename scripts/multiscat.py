@@ -16,11 +16,11 @@ from slate_quantum.operator import OperatorMetadata, operator_basis
 from multiscat.basis import (
     CloseCouplingBasis,
     ScatteringBasisMetadata,
-    ScatteringPotentialWithMetadata,
     close_coupling_basis,
     split_scattering_metadata,
 )
 from multiscat.config import GMRESConfig, ScatteringCondition
+from multiscat.interpolate import ScatteringOperator
 from multiscat.lobatto import (
     LobattoMetadata,
     get_lobatto_derivative_matrix,
@@ -138,11 +138,7 @@ def _get_scattered_state[
         KineticDifferenceOperatorBasis[M0, M1, E],
         np.dtype[np.complexfloating],
     ],
-    potential: ScatteringPotentialWithMetadata[
-        M0,
-        M1,
-        E,
-    ],
+    potential: ScatteringOperator[M0, M1, E],
     *,
     options: GMRESConfig,
 ) -> State[CloseCouplingBasis[M0, M1, E]]:
@@ -178,6 +174,9 @@ def _get_scattered_state[
             kinetic_raw,
             state.reshape((nx, ny, nz)),
         )
+        # Note that the potential is likely to be sparse, since only a few
+        # terms in a band along the diagonal are non-zero.
+        # For performance, we should use a sparse matrix here!
         cost_potential = np.einsum(
             "ij,j->",
             potential_raw,
