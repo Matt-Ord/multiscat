@@ -4,8 +4,9 @@ from typing import Any
 
 import numpy as np
 import pytest
+from slate_core.metadata import LabelSpacing
 
-from multiscat.lobatto import LobattoMetadata, get_derivative_polynomials
+from multiscat.lobatto import LobattoSpacedMetadata, get_derivative_polynomials
 
 
 def test_lobatto_points_known_results() -> None:
@@ -19,9 +20,13 @@ def test_lobatto_points_known_results() -> None:
     }
 
     for n, (expected_points, expected_weights) in known_results.items():
-        result = LobattoMetadata(n, 2)
+        result = LobattoSpacedMetadata(n, spacing=LabelSpacing(delta=2.0))
         np.testing.assert_allclose(result.values - 1, expected_points, rtol=1e-5)
-        np.testing.assert_allclose(result.weights, expected_weights, rtol=1e-5)
+        np.testing.assert_allclose(
+            result.quadrature_weights,
+            expected_weights,
+            rtol=1e-5,
+        )
 
 
 @pytest.fixture
@@ -32,7 +37,7 @@ def random_n() -> int:
 
 
 def test_lobatto_points_symmetry(random_n: int) -> None:
-    result = LobattoMetadata(random_n, 2.0)
+    result = LobattoSpacedMetadata(random_n, spacing=LabelSpacing(delta=2.0))
     np.testing.assert_allclose(
         result.values - 1.0,
         -(result.values[::-1] - 1.0),
@@ -40,8 +45,8 @@ def test_lobatto_points_symmetry(random_n: int) -> None:
         atol=2e-7,
     )
     np.testing.assert_allclose(
-        result.weights,
-        result.weights[::-1],
+        result.quadrature_weights,
+        result.quadrature_weights[::-1],
         err_msg=f"Weights not symmetric for n={random_n}",
         atol=1e-10,
     )
@@ -114,14 +119,14 @@ def _lobatto_from_fortran(
 
 
 def test_lobatto_points_against_fortran(random_n: int) -> None:
-    result = LobattoMetadata(random_n, 1)
+    result = LobattoSpacedMetadata(random_n, spacing=LabelSpacing(delta=1.0))
     fortran_result = _lobatto_from_fortran(0, 1, random_n)
     np.testing.assert_allclose(result.values, fortran_result[0], atol=1e-8)
-    np.testing.assert_allclose(result.weights, fortran_result[1], atol=1e-8)
+    np.testing.assert_allclose(result.quadrature_weights, fortran_result[1], atol=1e-8)
 
 
 def get_lobatto_derivatives_explicit(
-    points: LobattoMetadata,
+    points: LobattoSpacedMetadata,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     """
     Calculate the derivative matrix u_i'(R_j) for the lobatto basis.
@@ -160,7 +165,7 @@ def get_lobatto_derivatives_explicit(
 
     u_derivative = reciprocal_diff * products
     # Calculate diagonal elements seperately
-    # u_i'(R_i) = \sum_j=0 M+1 (R_i - R_j)^-1
+    # u_i'(R_j) = \sum_j=0 M+1 (R_i - R_j)^-1
     u_derivative[np.arange(n_points), np.arange(n_points)] = np.sum(
         reciprocal_diff,
         axis=1,
@@ -169,7 +174,7 @@ def get_lobatto_derivatives_explicit(
 
 
 def test_lobatto_derivatives_against_explicit(random_n: int) -> None:
-    lobatto_points = LobattoMetadata(random_n, 2)
+    lobatto_points = LobattoSpacedMetadata(random_n, spacing=LabelSpacing(delta=2.0))
 
     polynomial_derivatives = np.array(
         [p(lobatto_points.values) for p in get_derivative_polynomials(lobatto_points)],
@@ -177,8 +182,12 @@ def test_lobatto_derivatives_against_explicit(random_n: int) -> None:
     )
 
     derivatives = get_lobatto_derivatives_explicit(lobatto_points)
+    # Our polynomials are normalized such that
+    # u_i(R_j) = delta_{i,j} / sqrt(w_j)
+    # so we need to divide the usual fortran derivatives by
+    # the square root of the weights
     np.testing.assert_allclose(
-        derivatives,
+        derivatives / np.sqrt(lobatto_points.quadrature_weights[:, np.newaxis]),
         polynomial_derivatives,
         equal_nan=True,
         atol=1e-7,

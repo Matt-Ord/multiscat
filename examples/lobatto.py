@@ -1,7 +1,8 @@
-import matplotlib.pyplot as plt
 import numpy as np
+from slate_core import plot
+from slate_core.metadata import LabelSpacing
 
-from multiscat.lobatto import LobattoMetadata, get_polynomials
+from multiscat.lobatto import LobattoSpacedMetadata, get_polynomials
 
 if __name__ == "__main__":
     # An example visualizing the Lobatto polynomials, used to represent
@@ -9,10 +10,47 @@ if __name__ == "__main__":
     # The lobatto polynomials are particularly well suited for
     # representing the scattering potential.
 
+    # The lobatto weights are the weights such that
+    # the integral of a polynomial is approximated by the sum
+    # of the polynomial evaluated at the lobatto points, multiplied
+    # by the weights.
+    # int_s f(R) dR = sum_k f(R_k) w_k
+    # where R_k are the lobatto points and w_k are the weights.
+    # In an evenly spaced grid of points, these weights would simply be
+    # the average step size between the points.
+    #
+    # For the lobatto basis to be normalized, the basis functions
+    # are defined such that U(R_i)_j = delta_{i,j} / sqrt(w_i). This
+    # means that
+    # int_s U(R)_i U(R)_j dR = sum_k U_i(R_k)U_j(R_k) w_k = delta_{i,j}
+    fig, ax = plot.get_figure()
+    for meta in [
+        # N=2 corresponds to the trapezium rule
+        LobattoSpacedMetadata(2, spacing=LabelSpacing(delta=7)),
+        # N=3 corresponds to Simpson's rule
+        LobattoSpacedMetadata(3, spacing=LabelSpacing(delta=10)),
+        LobattoSpacedMetadata(5, spacing=LabelSpacing(delta=49)),
+        LobattoSpacedMetadata(11, spacing=LabelSpacing(delta=700)),
+        LobattoSpacedMetadata(25, spacing=LabelSpacing(delta=3)),
+        LobattoSpacedMetadata(31, spacing=LabelSpacing(delta=5)),
+    ]:
+        average_step = meta.delta / meta.fundamental_size
+        (line,) = ax.plot(
+            meta.values / meta.delta,
+            meta.quadrature_weights / average_step,
+        )
+    ax.set_xlabel("Lobatto Point (normalized)")
+    ax.set_ylabel("Lobatto Weights/ Average Step Size")
+    ax.set_title("Lobatto Weights Normalized by Average Step Size")
+    fig.show()
+
     # TODO: this breaks around 35 points  # noqa: FIX002
     # This is due to an issue with finding the Legendre derivative roots
     # we need a better aproach!
-    lobatto_metadata = LobattoMetadata(35, 2.0)
+    lobatto_metadata = LobattoSpacedMetadata(
+        35,
+        spacing=LabelSpacing(delta=2.0),
+    )
 
     points = np.linspace(
         lobatto_metadata.values[0],
@@ -20,8 +58,12 @@ if __name__ == "__main__":
         10000,
         dtype=np.float64,
     )
-    fig, ax = plt.subplots()  # type: ignore unknown
+    fig, ax = plot.get_figure()
     for polynomial in get_polynomials(lobatto_metadata):
-        ax.plot(points, polynomial(points))  # type: ignore unknown
+        # These are the normalized lobatto polynomials,
+        # note at the edge they are larger!
+        ax.plot(points, polynomial(points))
+    ax.set_title("Lobatto Polynomials")
     fig.show()
-    input()
+
+    plot.wait_for_close()
