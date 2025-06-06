@@ -16,12 +16,12 @@ from multiscat.basis import (
 if TYPE_CHECKING:
     from slate_core.metadata import (
         AxisDirections,
-        SpacedLengthMetadata,
-        SpacedVolumeMetadata,
+        EvenlySpacedLengthMetadata,
+        EvenlySpacedVolumeMetadata,
     )
     from slate_quantum.operator import OperatorBasis
 
-    from multiscat.lobatto import LobattoMetadata
+    from multiscat.lobatto import LobattoSpacedMetadata
 
 type ScatteringOperator[
     M0: SimpleMetadata,
@@ -33,19 +33,22 @@ type ScatteringOperator[
 ]
 
 
+# TODO: Make this more general, interpolating between  # noqa: FIX002
+# LabelledMetadata and move it into slate_quantum.operator.build,
+# since this is generally useful.
 def interpolate_potential[
-    M0: SpacedLengthMetadata,
-    M1: LobattoMetadata,
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedMetadata,
     E: AxisDirections,
 ](
     metadata: ScatteringBasisMetadata[M0, M1, E],
     potential: Operator[
-        OperatorBasis[SpacedVolumeMetadata],
+        OperatorBasis[EvenlySpacedVolumeMetadata],
         np.dtype[np.complexfloating],
     ],
 ) -> ScatteringOperator[M0, M1, E]:
     old_state_metadata = cast(
-        "ScatteringBasisMetadata[SpacedLengthMetadata]",
+        "ScatteringBasisMetadata[EvenlySpacedLengthMetadata]",
         potential.basis.metadata().children[0],
     )
     if metadata.extra != old_state_metadata.extra:
@@ -78,7 +81,10 @@ def interpolate_potential[
             metadata.children[2].values,
             old_state_metadata.children[2].values,
             d,
-        ),
+        )
+        # TODO: We need to add weights to a general LabelledMetadata  # noqa: FIX002
+        # if they are not EvenlySpaced
+        * metadata.children[2].quadrature_weights,
         2,
         converted.raw_data.reshape(old_state_metadata.shape),
     )

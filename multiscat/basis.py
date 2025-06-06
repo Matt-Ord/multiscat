@@ -14,15 +14,16 @@ from slate_core import (
 from slate_core.basis import AsUpcast
 from slate_core.metadata import (
     AxisDirections,
+    EvenlySpacedLengthMetadata,
     LabelSpacing,
-    SpacedLengthMetadata,
 )
+from slate_core.metadata.volume import project_directions_onto_axes
 
-from multiscat.lobatto import LobattoMetadata
+from multiscat.lobatto import LobattoSpacedLengthMetadata
 
 type ScatteringBasisMetadata[
-    M0: SimpleMetadata = SpacedLengthMetadata,
-    M1: SimpleMetadata = LobattoMetadata,
+    M0: SimpleMetadata = EvenlySpacedLengthMetadata,
+    M1: SimpleMetadata = LobattoSpacedLengthMetadata,
     E: AxisDirections = AxisDirections,
 ] = TupleMetadata[
     tuple[M0, M0, M1],
@@ -39,43 +40,24 @@ def scattering_metadata_from_stacked_delta_x(
     normalized_vectors = tuple(v / dv for v, dv in zip(vectors, delta_v, strict=True))
     return TupleMetadata(
         (
-            SpacedLengthMetadata(shape[0], spacing=LabelSpacing(delta=delta_v[0])),
-            SpacedLengthMetadata(shape[1], spacing=LabelSpacing(delta=delta_v[1])),
-            LobattoMetadata(shape[2], delta_v[2]),
+            EvenlySpacedLengthMetadata(
+                shape[0],
+                spacing=LabelSpacing(delta=delta_v[0]),
+                is_periodic=True,
+            ),
+            EvenlySpacedLengthMetadata(
+                shape[1],
+                spacing=LabelSpacing(delta=delta_v[1]),
+                is_periodic=True,
+            ),
+            LobattoSpacedLengthMetadata(
+                shape[2],
+                spacing=LabelSpacing(delta=delta_v[2]),
+                is_periodic=False,
+            ),
         ),
         AxisDirections(vectors=normalized_vectors),
     )
-
-
-def _get_vectors_perpendicular_to(
-    vector: np.ndarray[Any, np.dtype[np.floating]],
-) -> tuple[
-    np.ndarray[tuple[int], np.dtype[np.floating]],
-    np.ndarray[tuple[int], np.dtype[np.floating]],
-]:
-    assert vector.size == 3, "Vector must be a 3D vector."  # noqa: PLR2004, S101
-    guess = (
-        np.array([1, 0, 0]) if abs(vector[0]) > abs(vector[1]) else np.array([0, 1, 0])
-    )
-    v0 = guess - np.dot(guess, vector) * vector
-    v0 /= np.linalg.norm(v0)
-    return (v0, np.cross(vector, v0))  # type: ignore bad library type
-
-
-def _project_x01_axis_directions(
-    metadata: AxisDirections,
-) -> AxisDirections:
-    """
-    Project the axis directions from the scattering basis metadata.
-
-    This is used to extract the axis directions from the metadata.
-    """
-    vx, vy, vz = metadata.vectors
-    v0, v1 = _get_vectors_perpendicular_to(vz)
-
-    a_plane = np.array([np.dot(vx, v0), np.dot(vx, v1)])
-    b_plane = np.array([np.dot(vy, v0), np.dot(vy, v1)])
-    return AxisDirections(vectors=(a_plane, b_plane))
 
 
 def split_scattering_metadata[
@@ -88,16 +70,18 @@ def split_scattering_metadata[
     M1,
 ]:
     """Split the scattering basis metadata into parallel and perpendicular parts."""
-    directions_x01 = _project_x01_axis_directions(metadata.extra)
     return (
-        TupleMetadata(metadata.children[:2], directions_x01),
+        TupleMetadata(
+            metadata.children[:2],
+            project_directions_onto_axes(metadata.extra, (0, 1)),
+        ),
         metadata.children[2],
     )
 
 
 type CloseCouplingBasis[
-    M0: SimpleMetadata = SpacedLengthMetadata,
-    M1: SimpleMetadata = LobattoMetadata,
+    M0: SimpleMetadata = EvenlySpacedLengthMetadata,
+    M1: SimpleMetadata = LobattoSpacedLengthMetadata,
     E: AxisDirections = AxisDirections,
 ] = TupleBasis[
     tuple[

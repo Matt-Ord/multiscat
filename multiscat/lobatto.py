@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import cast, override
+from typing import TYPE_CHECKING, cast, override
 
 import numpy as np
 import scipy.special  # type: ignore unknown
-from slate_core.metadata import (
-    LengthMetadata,
-)
+from slate_core.metadata import LengthMetadata, SpacedMetadata
+
+if TYPE_CHECKING:
+    from slate_core.metadata import LabelSpacing
 
 
 @dataclass(frozen=True)
@@ -16,7 +17,7 @@ class _LobattoData:
     """Points and weights for Lobatto quadrature."""
 
     points: np.ndarray[tuple[int], np.dtype[np.float64]]
-    weights: np.ndarray[tuple[int], np.dtype[np.float64]]
+    quadrature_weights: np.ndarray[tuple[int], np.dtype[np.float64]]
 
 
 def _get_fundamental_lobatto_data(
@@ -45,7 +46,7 @@ def _get_fundamental_lobatto_data(
     points = np.concat([[-1], inner_points, [1]]).astype(np.float64)
     weights = (2 / (n * (n - 1))) * np.concat([[1], inner_weights, [1]])  # type: ignore library types
 
-    return _LobattoData(points=points, weights=weights)  # type: ignore library types
+    return _LobattoData(points=points, quadrature_weights=weights)  # type: ignore library types
 
 
 def _get_scaled_lobatto_data(
@@ -60,26 +61,30 @@ def _get_scaled_lobatto_data(
 
     return _LobattoData(
         points=scale * points.points + shift,  # type: ignore library types
-        weights=scale * points.weights,  # type: ignore library types
+        quadrature_weights=scale * points.quadrature_weights,  # type: ignore library types
     )
 
 
-class LobattoMetadata(LengthMetadata):
+@dataclass(frozen=True, kw_only=True)
+class LobattoSpacedMetadata(SpacedMetadata[np.dtype[np.floating]]):
     """Metadata for a Lobatto basis."""
 
-    def __init__(self, n: int, delta: float) -> None:
-        self._delta = delta
-        super().__init__(n)
+    spacing: LabelSpacing
 
     @cached_property
+    @override
     def _lobatto_data(self) -> _LobattoData:
         """Get the fundamental lobatto points and weights."""
-        return _get_scaled_lobatto_data(self.fundamental_size, (0, self.delta))
+        return _get_scaled_lobatto_data(
+            self.fundamental_size,
+            (self.spacing.start, self.delta + self.spacing.start),
+        )
 
     @property
-    def weights(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+    @override
+    def quadrature_weights(self) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
         """Get the weights of the lobatto points."""
-        return self._lobatto_data.weights
+        return self._lobatto_data.quadrature_weights
 
     @property
     @override
@@ -90,13 +95,20 @@ class LobattoMetadata(LengthMetadata):
     @property
     @override
     def delta(self) -> float:
-        return self._delta
+        return self.spacing.delta
 
 
-def get_polynomials(
-    metadata: LobattoMetadata,
+class LobattoSpacedLengthMetadata(LobattoSpacedMetadata, LengthMetadata):
+    """Metadata with the addition of length."""
+
+
+def get_unnormalized_polynomials(
+    metadata: SpacedMetadata[np.dtype[np.floating]],
 ) -> list[np.polynomial.Polynomial]:
     """Get the lobatto polynomials for the lobatto points."""
+    if metadata.is_periodic:
+        msg = "Currently we do not support periodic metadata."
+        raise NotImplementedError(msg)
     domain = np.array([metadata.values[0], metadata.values[-1]])
     polynomials = [
         cast(
@@ -107,29 +119,37 @@ def get_polynomials(
     ]
     return [
         polynomial / polynomial(point)
-        for (polynomial, point) in zip(polynomials, metadata.values, strict=True)
+        for (polynomial, point) in zip(
+            polynomials,
+            metadata.values,
+            strict=True,
+        )
     ]
 
 
-def get_weighted_polynomials(
-    metadata: LobattoMetadata,
+def get_polynomials(
+    metadata: SpacedMetadata[np.dtype[np.floating]],
 ) -> list[np.polynomial.Polynomial]:
     """Get the weighted lobatto polynomials for the lobatto points."""
     return [
-        p * w
-        for (p, w) in zip(get_polynomials(metadata), metadata.weights, strict=True)
+        p / np.sqrt(w)
+        for (p, w) in zip(
+            get_unnormalized_polynomials(metadata),
+            metadata.quadrature_weights,
+            strict=True,
+        )
     ]
 
 
 def get_derivative_polynomials(
-    metadata: LobattoMetadata,
+    metadata: SpacedMetadata[np.dtype[np.floating]],
 ) -> list[np.polynomial.Polynomial]:
     """Get the derivative polynomials for the lobatto points."""
     return [p.deriv() for p in get_polynomials(metadata)]
 
 
 def get_lobatto_derivative_matrix(
-    metadata: LobattoMetadata,
+    metadata: SpacedMetadata[np.dtype[np.floating]],
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     return np.array(  # type: ignore shape-mismatch
         [p(metadata.values) for p in get_derivative_polynomials(metadata)],

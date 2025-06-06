@@ -7,7 +7,7 @@ from slate_core import SimpleMetadata, TupleBasis, TupleMetadata
 from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
     AxisDirections,
-    SpacedLengthMetadata,
+    EvenlySpacedLengthMetadata,
 )
 from slate_core.metadata.volume import fundamental_stacked_k_points
 from slate_quantum import Operator, State
@@ -19,10 +19,11 @@ from multiscat.basis import (
     close_coupling_basis,
     split_scattering_metadata,
 )
-from multiscat.config import GMRESConfig, ScatteringCondition
+from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.interpolate import ScatteringOperator
 from multiscat.lobatto import (
-    LobattoMetadata,
+    LobattoSpacedLengthMetadata,
+    LobattoSpacedMetadata,
     get_lobatto_derivative_matrix,
 )
 
@@ -56,7 +57,7 @@ def _get_kinetic_difference_operator_basis[
 
 def _get_parallel_kinetic_energy[
     M0: SimpleMetadata,
-    M1: LobattoMetadata,
+    M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
 ](
     metadata: ScatteringBasisMetadata[M0, M1, E],
@@ -76,12 +77,18 @@ def _get_parallel_kinetic_energy[
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that the array does not have and index for the perpendicular
     # direction, so we cannot use existing ContractedBasis functionality
-    return np.einsum("k,ik,jk->ij", lobatto_metadata.weights, derivatives, derivatives)
+    assert not lobatto_metadata.is_periodic  # noqa: S101
+    return np.einsum(
+        "k,ik,jk->ij",
+        lobatto_metadata.quadrature_weights,
+        derivatives,
+        derivatives,
+    )
 
 
 def _get_perpendicular_kinetic_difference[
-    M0: SpacedLengthMetadata,
-    M1: LobattoMetadata,
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedMetadata,
     E: AxisDirections,
 ](
     incident_k: tuple[float, float, float],
@@ -102,8 +109,8 @@ def _get_perpendicular_kinetic_difference[
 
 
 def get_kinetic_difference_operator[
-    M0: SpacedLengthMetadata,
-    M1: LobattoMetadata,
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
 ](
     incident_k: tuple[float, float, float],
@@ -129,9 +136,9 @@ def get_kinetic_difference_operator[
     )
 
 
-def _get_scattered_state[
-    M0: SpacedLengthMetadata,
-    M1: LobattoMetadata,
+def _get_scattered_state_log_derivative[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedMetadata,
     E: AxisDirections,
 ](
     kinetic_difference: Operator[
@@ -140,7 +147,26 @@ def _get_scattered_state[
     ],
     potential: ScatteringOperator[M0, M1, E],
     *,
-    options: GMRESConfig,
+    options: OptimizationConfig,
+) -> State[CloseCouplingBasis[M0, M1, E]]:
+    # TODO: build the necessary operators for the log derivative  # noqa: FIX002
+    # functional.
+    msg = "This function is not implemented yet. "
+    raise NotImplementedError(msg)
+
+
+def _get_scattered_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedMetadata,
+    E: AxisDirections,
+](
+    kinetic_difference: Operator[
+        KineticDifferenceOperatorBasis[M0, M1, E],
+        np.dtype[np.complexfloating],
+    ],
+    potential: ScatteringOperator[M0, M1, E],
+    *,
+    options: OptimizationConfig,
 ) -> State[CloseCouplingBasis[M0, M1, E]]:
     """
     Get the basis for the scattered state.
@@ -170,15 +196,16 @@ def _get_scattered_state[
         """Cost function for the GMRES solver."""
         # The cost function is the kinetic energy minus the potential energy
         cost_kinetic = np.einsum(
-            "ijkl,ijl->",
+            "ijkl,ijl->ijk",
             kinetic_raw,
             state.reshape((nx, ny, nz)),
-        )
+        ).ravel()
         # Note that the potential is likely to be sparse, since only a few
         # terms in a band along the diagonal are non-zero.
         # For performance, we should use a sparse matrix here!
+        # TODO: can we do this more effiecently using fourier transforms? # noqa: FIX002
         cost_potential = np.einsum(
-            "ij,j->",
+            "ij,j->i",
             potential_raw,
             state.ravel(),
         )
@@ -191,6 +218,8 @@ def _get_scattered_state[
     # to speed up the loop.
     # Or we could use a more efficient approach (ML) to speed up the
     # convergence of the solver.
+    # TODO: how do we ensure bcs are satisfied, we chould probably  # noqa: FIX002
+    # manually add the initial condition each iteration? Is this evven needed?
     data, _info = scipy.sparse.linalg.gmres(  # type: ignore[unknown]
         A=scipy.sparse.linalg.LinearOperator(
             shape=potential_raw.shape,
@@ -208,18 +237,26 @@ def _get_scattered_state[
 
 
 def get_scattered_state[
-    M0: SpacedLengthMetadata,
-    M1: LobattoMetadata,
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
 ](
     condition: ScatteringCondition[M0, M1, E],
     *,
-    options: GMRESConfig,
+    options: OptimizationConfig | None = None,
 ) -> State[CloseCouplingBasis[M0, M1, E]]:
+    options = options or OptimizationConfig()
     kinetic_difference = get_kinetic_difference_operator(
         condition.incident_k,
         condition.metadata,
     )
+    if options.method == "log_derivative":
+        return _get_scattered_state_log_derivative(
+            kinetic_difference,
+            condition.potential,
+            options=options,
+        )
+
     return _get_scattered_state(
         kinetic_difference,
         condition.potential,
