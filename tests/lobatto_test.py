@@ -149,7 +149,8 @@ def get_lobatto_derivatives_explicit(
 
     # Calculate the reciprocal of differences (R_i - R_j)^-1, ignoring the diagonal
     diff = points.values[:, np.newaxis] - points.values[np.newaxis, :]
-    reciprocal_diff = np.where(diff != 0, 1.0 / diff, 0)
+    with np.errstate(divide="ignore"):
+        reciprocal_diff = np.where(diff != 0, 1.0 / diff, 0)
 
     # Calculate product_k=0^M+1 (R_j-R_k) / (R_i - R_k)
     mask = np.eye(n_points, dtype=bool)
