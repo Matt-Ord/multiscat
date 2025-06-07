@@ -1,3 +1,4 @@
+import warnings
 from typing import Any, cast
 
 import numpy as np
@@ -14,6 +15,7 @@ from slate_core.metadata import (
 from slate_core.metadata.volume import fundamental_stacked_k_points
 from slate_quantum import Operator, State
 from slate_quantum.operator import OperatorMetadata, operator_basis
+from tqdm import tqdm
 
 from multiscat.basis import (
     CloseCouplingBasis,
@@ -23,7 +25,7 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.interpolate import ScatteringOperator
-from multiscat.polynomial import get_derivative_matrix
+from multiscat.polynomial import get_barycentric_derivatives
 
 type KineticDifferenceOperatorBasis[
     M0: SimpleMetadata,
@@ -71,7 +73,7 @@ def _get_parallel_kinetic_energy[
     # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
     # to calculate the kinetic matrix T_ij
     lobatto_metadata = metadata.children[2]
-    derivatives = get_derivative_matrix(lobatto_metadata)
+    derivatives = get_barycentric_derivatives(lobatto_metadata)
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that the array does not have and index for the perpendicular
     # direction, so we cannot use existing ContractedBasis functionality
@@ -153,6 +155,45 @@ def _get_scattered_state_log_derivative[
     raise NotImplementedError(msg)
 
 
+def _gmres[DT: np.dtype[np.number]](
+    matrix: scipy.sparse.linalg.LinearOperator,
+    initial_state: np.ndarray[Any, DT],
+    *,
+    options: OptimizationConfig,
+) -> np.ndarray[Any, DT]:
+    resid_bar = tqdm(total=1.0, desc="Total Convergence", position=1, leave=False)
+
+    def _callback(pr_norm: float) -> None:
+        error = round(np.log10(pr_norm / options.precision), 3)
+        next_progress = round(resid_bar.total - error, 3)
+        if next_progress < 0:
+            resid_bar.reset(total=error)
+            next_progress = 0
+
+        resid_bar.n = next_progress
+        resid_bar.refresh()
+
+    data, _info = scipy.sparse.linalg.gmres(  # type: ignore[unknown]
+        A=matrix,
+        b=initial_state,
+        rtol=options.precision,
+        maxiter=options.max_iterations,
+        callback=_callback,
+        callback_type="pr_norm",
+    )
+    resid_bar.close()
+    if _info != 0:
+        warnings.warn(
+            f"GMRES iteration did not converge in {options.max_iterations} "
+            f"iterations to a precision of {options.precision}. "
+            "This may indicate that the problem is ill-conditioned or that the "
+            "initial guess is too far from the solution.",
+            UserWarning,
+            stacklevel=4,
+        )
+    return cast("np.ndarray[Any, DT]", data)
+
+
 def _get_scattered_state[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedMetadata,
@@ -176,6 +217,7 @@ def _get_scattered_state[
     state_basis = close_coupling_basis(state_metadata)
     nx, ny, nz = state_metadata.shape
 
+    # TODO: use split operator here ...  # noqa: FIX002
     potential_raw = potential.with_basis(
         operator_basis(state_basis),
     ).raw_data.reshape(
@@ -186,7 +228,7 @@ def _get_scattered_state[
     )
 
     initial_state = np.zeros((nx, ny, nz), dtype=np.complexfloating)
-    initial_state[0, 0, 0] = 1.0
+    initial_state[0, 0, -1] = 1.0
 
     def matmul_hamiltonian(
         state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
@@ -216,22 +258,18 @@ def _get_scattered_state[
     # to speed up the loop.
     # Or we could use a more efficient approach (ML) to speed up the
     # convergence of the solver.
-    # TODO: how do we ensure bcs are satisfied, we chould probably  # noqa: FIX002
-    # manually add the initial condition each iteration? Is this evven needed?
-    data, _info = scipy.sparse.linalg.gmres(  # type: ignore[unknown]
-        A=scipy.sparse.linalg.LinearOperator(
+    # TODO: how do we ensure bcs are satisfied, we should probably  # noqa: FIX002
+    # manually add the initial condition each iteration? Is this even needed?
+    data = _gmres(  # type: ignore[unknown]
+        matrix=scipy.sparse.linalg.LinearOperator(
             shape=potential_raw.shape,
             matvec=matmul_hamiltonian,  # type: ignore[call-arg]
             dtype=np.complexfloating,
         ),
-        b=initial_state.ravel(),
-        rtol=options.precision,
-        maxiter=options.max_iterations,
+        initial_state=initial_state.ravel(),
+        options=options,
     )
-    return State(
-        state_basis,
-        cast("np.ndarray[Any, np.dtype[np.complexfloating]]", data),
-    )
+    return State(state_basis, data)
 
 
 def get_scattered_state[

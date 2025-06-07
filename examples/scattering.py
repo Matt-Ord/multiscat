@@ -29,7 +29,6 @@ if __name__ == "__main__":
             np.array([0, UNIT_CELL, 0]),
             np.array([0, 0, Z_HEIGHT]),
         ),
-        # TODO: we cant do 99 :(  # noqa: FIX002
         (19, 19, 99),
     )
     # This is taken from https://doi.org/10.1039/FT9908601641
@@ -45,7 +44,7 @@ if __name__ == "__main__":
         ),
     )
     state = get_scattered_state(condition)
-    fig, ax, _anim0 = plot.animate_data_2d(state)
+    fig, ax, _anim0 = plot.animate_data_2d(state, axes=(0, 2, 1), measure="abs")
     ax.set_title(
         (
             "The scattered state,\n"
