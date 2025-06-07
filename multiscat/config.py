@@ -8,9 +8,10 @@ from scipy.constants import hbar  # type: ignore[import-untyped]
 from slate_core.metadata import AxisDirections, EvenlySpacedLengthMetadata
 
 if TYPE_CHECKING:
+    from slate_core.metadata import LobattoSpacedMetadata
+
     from multiscat.basis import ScatteringBasisMetadata
     from multiscat.interpolate import ScatteringOperator
-    from multiscat.lobatto import LobattoSpacedMetadata
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -8,6 +8,8 @@ from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
     AxisDirections,
     EvenlySpacedLengthMetadata,
+    LobattoSpacedLengthMetadata,
+    LobattoSpacedMetadata,
 )
 from slate_core.metadata.volume import fundamental_stacked_k_points
 from slate_quantum import Operator, State
@@ -21,11 +23,7 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.interpolate import ScatteringOperator
-from multiscat.lobatto import (
-    LobattoSpacedLengthMetadata,
-    LobattoSpacedMetadata,
-    get_lobatto_derivative_matrix,
-)
+from multiscat.polynomial import get_derivative_matrix
 
 type KineticDifferenceOperatorBasis[
     M0: SimpleMetadata,
@@ -73,7 +71,7 @@ def _get_parallel_kinetic_energy[
     # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
     # to calculate the kinetic matrix T_ij
     lobatto_metadata = metadata.children[2]
-    derivatives = get_lobatto_derivative_matrix(lobatto_metadata)
+    derivatives = get_derivative_matrix(lobatto_metadata)
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that the array does not have and index for the perpendicular
     # direction, so we cannot use existing ContractedBasis functionality

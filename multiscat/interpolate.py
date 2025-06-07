@@ -18,10 +18,9 @@ if TYPE_CHECKING:
         AxisDirections,
         EvenlySpacedLengthMetadata,
         EvenlySpacedVolumeMetadata,
+        LobattoSpacedMetadata,
     )
     from slate_quantum.operator import OperatorBasis
-
-    from multiscat.lobatto import LobattoSpacedMetadata
 
 type ScatteringOperator[
     M0: SimpleMetadata,
