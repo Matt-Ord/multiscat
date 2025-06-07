@@ -16,10 +16,9 @@ from slate_core.metadata import (
     AxisDirections,
     EvenlySpacedLengthMetadata,
     LabelSpacing,
+    LobattoSpacedLengthMetadata,
 )
 from slate_core.metadata.volume import project_directions_onto_axes
-
-from multiscat.lobatto import LobattoSpacedLengthMetadata
 
 type ScatteringBasisMetadata[
     M0: SimpleMetadata = EvenlySpacedLengthMetadata,

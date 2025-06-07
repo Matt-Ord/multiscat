@@ -1,8 +1,8 @@
 import numpy as np
 from slate_core import plot
-from slate_core.metadata import LabelSpacing
+from slate_core.metadata import LabelSpacing, LobattoSpacedMetadata
 
-from multiscat.lobatto import LobattoSpacedMetadata, get_polynomials
+from multiscat.polynomial import get_polynomials
 
 if __name__ == "__main__":
     # An example visualizing the Lobatto polynomials, used to represent
@@ -33,6 +33,7 @@ if __name__ == "__main__":
         LobattoSpacedMetadata(11, spacing=LabelSpacing(delta=700)),
         LobattoSpacedMetadata(25, spacing=LabelSpacing(delta=3)),
         LobattoSpacedMetadata(31, spacing=LabelSpacing(delta=5)),
+        LobattoSpacedMetadata(300, spacing=LabelSpacing(delta=5)),
     ]:
         average_step = meta.delta / meta.fundamental_size
         (line,) = ax.plot(
