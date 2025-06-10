@@ -1,26 +1,11 @@
 import numpy as np
-from scipy.constants import (  # type: ignore[import-untyped]
-    angstrom,
-    electron_volt,
-    physical_constants,
-)
+from _params import HELIUM_ENERGY, HELIUM_MASS, MORSE_PARAMETERS, UNIT_CELL, Z_HEIGHT
 from slate_core import plot
 from slate_quantum import operator
 
 from multiscat.basis import scattering_metadata_from_stacked_delta_x
 from multiscat.config import ScatteringCondition
-from multiscat.multiscat import get_scattered_state
-
-HELIUM_MASS = physical_constants["alpha particle mass"][0]
-UNIT_CELL = 2.84 * angstrom
-Z_HEIGHT = 3 * angstrom  # TODO: double check this value  # noqa: FIX002
-
-MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(
-    depth=7.63 * electron_volt * 10**-3,
-    height=0.91 * angstrom,
-    offset=1.0 * angstrom,
-    beta=0.05,
-)
+from multiscat.multiscat import get_scattered_state, get_scattering_matrix
 
 if __name__ == "__main__":
     metadata = scattering_metadata_from_stacked_delta_x(
@@ -31,12 +16,9 @@ if __name__ == "__main__":
         ),
         (19, 19, 99),
     )
-    # This is taken from https://doi.org/10.1039/FT9908601641
-    # and is a reproduction of the Wolken 4He-LiF problem in table 1,
-    # originally simulated in https://doi.org/10.1063/1.1679617.
     condition = ScatteringCondition.from_angles(
         mass=HELIUM_MASS,
-        energy=100 * electron_volt * 10**-3,
+        energy=HELIUM_ENERGY,
         theta=30,
         potential=operator.build.corrugated_morse_potential(
             metadata,
@@ -53,5 +35,9 @@ if __name__ == "__main__":
     )
     fig.show()
 
-    # TODO: get S matrix from result and plot it...  # noqa: FIX002
+    s_matrix = get_scattering_matrix(state)
+    fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix)
+    ax.set_title("The scattering matrix")
+    fig.show()
+
     plot.wait_for_close()

@@ -14,8 +14,8 @@ from slate_core import (
 from slate_core.basis import AsUpcast
 from slate_core.metadata import (
     AxisDirections,
+    Domain,
     EvenlySpacedLengthMetadata,
-    LabelSpacing,
     LobattoSpacedLengthMetadata,
 )
 from slate_core.metadata.volume import project_directions_onto_axes
@@ -41,18 +41,17 @@ def scattering_metadata_from_stacked_delta_x(
         (
             EvenlySpacedLengthMetadata(
                 shape[0],
-                spacing=LabelSpacing(delta=delta_v[0]),
-                is_periodic=True,
+                domain=Domain(delta=delta_v[0]),
+                interpolation="Fourier",
             ),
             EvenlySpacedLengthMetadata(
                 shape[1],
-                spacing=LabelSpacing(delta=delta_v[1]),
-                is_periodic=True,
+                domain=Domain(delta=delta_v[1]),
+                interpolation="Fourier",
             ),
             LobattoSpacedLengthMetadata(
                 shape[2],
-                spacing=LabelSpacing(delta=delta_v[2]),
-                is_periodic=False,
+                domain=Domain(delta=delta_v[2]),
             ),
         ),
         AxisDirections(vectors=normalized_vectors),

@@ -3,18 +3,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
+from slate_core import FundamentalBasis
+from slate_quantum import Operator
+from slate_quantum.operator import OperatorBasis, operator_basis
 
 if TYPE_CHECKING:
-    from slate_core.metadata import SpacedMetadata
+    from slate_core.metadata import BarycentricMetadata
 
 
 def get_unnormalized_polynomials(
-    metadata: SpacedMetadata[np.dtype[np.floating]],
+    metadata: BarycentricMetadata,
 ) -> list[np.polynomial.Polynomial]:
     """Get the lobatto polynomials for the lobatto points."""
-    if metadata.is_periodic:
-        msg = "Currently we do not support periodic metadata."
-        raise NotImplementedError(msg)
     domain = np.array([metadata.values[0], metadata.values[-1]])
     polynomials = [
         cast(
@@ -34,30 +34,28 @@ def get_unnormalized_polynomials(
 
 
 def get_polynomials(
-    metadata: SpacedMetadata[np.dtype[np.floating]],
+    metadata: BarycentricMetadata,
 ) -> list[np.polynomial.Polynomial]:
     """Get the weighted lobatto polynomials for the lobatto points."""
     return [
-        p / np.sqrt(w)
+        p * w
         for (p, w) in zip(
             get_unnormalized_polynomials(metadata),
-            metadata.quadrature_weights,
+            metadata.basis_weights,
             strict=True,
         )
     ]
 
 
 def get_derivative_polynomials(
-    metadata: SpacedMetadata[np.dtype[np.floating]],
+    metadata: BarycentricMetadata,
 ) -> list[np.polynomial.Polynomial]:
     """Get the derivative polynomials for the lobatto points."""
     return [p.deriv() for p in get_polynomials(metadata)]
 
 
-# TODO: we should specify the interpolation type, e.g. lagrange  # noqa: FIX002
-# vs fourier in the metadata.
 def get_barycentric_derivatives(
-    metadata: SpacedMetadata[np.dtype[np.floating]],
+    metadata: BarycentricMetadata,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     r"""
     Compute the derivative matrix M_ij = u_i'(x_j) using barycentric interpolation.
@@ -89,4 +87,31 @@ def get_barycentric_derivatives(
 
     derivatives = scaled_derivatives * scale_factor
 
-    return derivatives.T / np.sqrt(metadata.quadrature_weights[:, np.newaxis])
+    return derivatives.T * metadata.basis_weights[:, np.newaxis]
+
+
+def get_barycentric_kinetic_operator[M1: BarycentricMetadata](
+    metadata: M1,
+) -> Operator[OperatorBasis[M1], np.dtype[np.complex128]]:
+    """
+    Get the kinetic operator grad squared in a barycentric basis.
+
+    Formula for this are taken from:
+    "QUANTUM SCATTERING VIA THE LOG DERIVATIVE OF THE KOHN VARIATIONAL PRINCIPLE"
+    D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
+    """
+    # We use the barycentric metadata to get the lobatto points
+    # and the weights.
+    # We make use of the formula
+    # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
+    # to calculate the kinetic matrix T_ij
+    derivatives = get_barycentric_derivatives(metadata)
+    return Operator(
+        operator_basis(FundamentalBasis(metadata)).upcast(),
+        -np.einsum(
+            "k,ik,jk->ij",
+            1 / np.square(metadata.basis_weights),
+            derivatives,
+            derivatives,
+        ),
+    )
