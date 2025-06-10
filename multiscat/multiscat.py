@@ -4,8 +4,16 @@ from typing import Any, cast
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
-from slate_core import Array, SimpleMetadata, TupleBasis, TupleMetadata, array, basis
-from slate_core.basis import AsUpcast, ContractedBasis
+from slate_core import (
+    Array,
+    Basis,
+    SimpleMetadata,
+    TupleBasis,
+    TupleMetadata,
+    array,
+    basis,
+)
+from slate_core.basis import AsUpcast, ContractedBasis, DiagonalBasis
 from slate_core.metadata import (
     AxisDirections,
     EvenlySpacedLengthMetadata,
@@ -28,7 +36,9 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.interpolate import ScatteringOperator
-from multiscat.polynomial import get_barycentric_derivatives
+from multiscat.polynomial import (
+    get_barycentric_kinetic_operator,
+)
 
 type KineticDifferenceOperatorBasis[
     M0: SimpleMetadata,
@@ -64,7 +74,7 @@ def _get_parallel_kinetic_energy[
     E: AxisDirections,
 ](
     metadata: ScatteringBasisMetadata[M0, M1, E],
-) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """
     Get the matrix of parallel kinetic energies T.
 
@@ -72,19 +82,16 @@ def _get_parallel_kinetic_energy[
     "QUANTUM SCATTERING VIA THE LOG DERIVATIVE OF THE KOHN VARIATIONAL PRINCIPLE"
     D. E. Manolopoulos and R. E. Wyatt, Chem. Phys. Lett., 1988, 152,23
     """
-    # We make use of the formula
-    # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
-    # to calculate the kinetic matrix T_ij
-    lobatto_metadata = metadata.children[2]
-    derivatives = get_barycentric_derivatives(lobatto_metadata)
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
-    # basis. Issue is that the array does not have and index for the perpendicular
-    # direction, so we cannot use existing ContractedBasis functionality
-    return np.einsum(
-        "k,ik,jk->ij",
-        1 / np.square(lobatto_metadata.basis_weights),
-        derivatives,
-        derivatives,
+    # basis. Issue is that this does not lend itself to an efficient
+    # implementation when we add the parrallel and perpendicular
+    # kinetic energies together.
+    lobatto_metadata = metadata.children[2]
+    return array.as_fundamental_basis(
+        get_barycentric_kinetic_operator(lobatto_metadata),
+    ).raw_data.reshape(
+        lobatto_metadata.fundamental_size,
+        lobatto_metadata.fundamental_size,
     )
 
 
@@ -131,7 +138,7 @@ def get_kinetic_difference_operator[
     d_ijk = np.einsum(
         "i,jk->ijk",
         d_i,
-        np.diag(1 / np.square(metadata.children[2].basis_weights)),
+        np.eye(t_jk.shape[0], dtype=np.complex128),
     )
 
     # The resulting difference operator is diagonal in the two bloch K indices
@@ -228,9 +235,17 @@ def _get_scattered_state[
     state_basis = close_coupling_basis(state_metadata)
     nx, ny, nz = state_metadata.shape
 
-    fundamental_state_basis = basis.from_metadata(state_metadata)
-    potential_diagonal = array.extract_diagonal(potential)
-    potential_raw = potential_diagonal.with_basis(fundamental_state_basis).raw_data
+    fundamental_state_basis = AsUpcast(
+        basis.from_metadata(state_metadata),
+        state_metadata,
+    )
+    potential_basis = DiagonalBasis(operator_basis(fundamental_state_basis)).upcast()
+    # We ensure we are storing V(x) as a diagonal operator for efficiency
+    potential = potential.with_basis(potential_basis)
+    kinetic_basis = _get_kinetic_difference_operator_basis(
+        state_metadata,
+    )
+    kinetic_difference = kinetic_difference.with_basis(kinetic_basis)
     kinetic_raw = kinetic_difference.raw_data.reshape(
         (nx, ny, nz, nz),
     )
@@ -239,28 +254,47 @@ def _get_scattered_state[
         state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complexfloating]]:
         """Cost function for the GMRES solver."""
+        state_array = Array(state_basis, state)
         # The cost function is the kinetic energy minus the potential energy
+        # TODO: we want to make einsum be smarter about  # noqa: FIX002
+        # contracted basis, so we dont need to do this manually.
+        # Once this is done we can repalce with the commented code below.
+        # ! cost_kinetic = (
+        # !     linalg.einsum("(i j'),j -> i", kinetic_difference, state_array)
+        # !     .with_basis(state_basis)
+        # !     .raw_data
+        # ! )
         cost_kinetic = np.einsum(
             "ijkl,ijl->ijk",
-            kinetic_raw,
+            kinetic_difference.with_basis(kinetic_basis).raw_data.reshape(
+                (nx, ny, nz, nz),
+            ),
             state.reshape((nx, ny, nz)),
         ).ravel()
-        # Note that the potential is likely to be sparse, since only a few
-        # terms of v(k) are non-zero.
-        # For performance, we should use a sparse matrix here!
-        # TODO: can we do this more effiecently? # noqa: FIX002
-        # We convert the state into position space, and then
-        # multiply by the potential before converting back
-        # This is essentially the split operator method.
-        potential = np.einsum(
-            "i,i->i",
-            potential_raw,
-            Array(state_basis, state.ravel())
-            .with_basis(fundamental_state_basis)
-            .raw_data,
-        )
+        # TODO: we want to make einsum be smarter about # noqa: FIX002
+        # contracted basis, so we dont need to do this manually.
+        # Once this is done we can repalce with the commented code below.
+        # TODO: we should make use of the fact that V(k) is sparse! # noqa: FIX002
+        # ! cost_potential = (
+        # !     linalg.einsum(
+        # !         "(i j'),j -> i",
+        # !         potential,
+        # !         state_array.with_basis(fundamental_state_basis),
+        # !     )
+        # !     .with_basis(state_basis)
+        # !     .raw_data
+        # ! )
         cost_potential = (
-            Array(fundamental_state_basis, potential).with_basis(state_basis).raw_data
+            Array(
+                fundamental_state_basis,
+                np.einsum(
+                    "i,i -> i",
+                    potential.with_basis(potential_basis).raw_data,
+                    state_array.with_basis(fundamental_state_basis).raw_data,
+                ),
+            )
+            .with_basis(state_basis)
+            .raw_data
         )
         return cost_kinetic + cost_potential
 
@@ -269,13 +303,27 @@ def _get_scattered_state[
     # invert.
     # We use a bloch diagonal Hamiltonian here, which is the kinetic energy
     # plus the potential energy at V_{G=0}
-    diagonal_potential = (
-        potential_diagonal.with_basis(state_basis)
-        .raw_data.reshape((nx, ny, nz))[0, 0]
-        .reshape((1, 1, nz))
+    # TODO: better einsum support for this, we should be able to use  # noqa: FIX002
+    # einsum to contract the potential operator with the state basis
+    # This gives the components of the diagonal V(x)
+    diagonal_potential = np.fft.fftn(
+        potential.with_basis(potential_basis).raw_data.reshape(
+            (nx, ny, nz),
+        ),
+        axes=(0, 1),
+        s=(1, 1),
+        norm="ortho",
     )
-    bloch_diagonal_hamiltonian = kinetic_raw + diagonal_potential
-    inverse_preconditioner = np.linalg.inv(bloch_diagonal_hamiltonian)
+    bloch_diagonal_potential = np.einsum(
+        "ijk,kl->ijkl",
+        diagonal_potential,
+        np.eye(nz),
+    )
+    bloch_diagonal_hamiltonian = kinetic_raw + bloch_diagonal_potential
+    inverse_preconditioner = cast(
+        "np.ndarray[Any, np.dtype[np.complexfloating]]",
+        np.linalg.inv(bloch_diagonal_hamiltonian),
+    )
 
     def matmul_preconditioner(
         state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
@@ -289,7 +337,6 @@ def _get_scattered_state[
         ).ravel()
 
     incoming = np.zeros((nx, ny, nz), dtype=np.complex128)
-    # TODO: is this 1.0 or some normalized value?
     incoming[0, 0, -1] = 1 / (state_metadata.children[2].basis_weights[-1])
 
     # TODO: to make gmres work 'well', we need to build the  # noqa: FIX002
@@ -343,4 +390,21 @@ def get_scattered_state[
         kinetic_difference,
         condition.potential,
         options=options,
+    )
+
+
+def get_scattering_matrix[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    state: State[CloseCouplingBasis[M0, M1, E]],
+) -> Array[
+    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
+    np.dtype[np.complexfloating],
+]:
+    metadata_x01, _ = split_scattering_metadata(state.basis.metadata())
+    return Array(
+        AsUpcast(basis.from_metadata(metadata_x01), metadata_x01),
+        state.as_array()[:, :, -1],
     )

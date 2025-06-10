@@ -5,7 +5,7 @@ from slate_quantum import operator
 
 from multiscat.basis import scattering_metadata_from_stacked_delta_x
 from multiscat.config import ScatteringCondition
-from multiscat.multiscat import get_scattered_state
+from multiscat.multiscat import get_scattered_state, get_scattering_matrix
 
 if __name__ == "__main__":
     metadata = scattering_metadata_from_stacked_delta_x(
@@ -35,5 +35,9 @@ if __name__ == "__main__":
     )
     fig.show()
 
-    # TODO: get S matrix from result and plot it...  # noqa: FIX002
+    s_matrix = get_scattering_matrix(state)
+    fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix)
+    ax.set_title("The scattering matrix")
+    fig.show()
+
     plot.wait_for_close()
