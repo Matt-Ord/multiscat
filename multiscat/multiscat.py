@@ -4,7 +4,7 @@ from typing import Any, cast
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
-from slate_core import SimpleMetadata, TupleBasis, TupleMetadata
+from slate_core import Array, SimpleMetadata, TupleBasis, TupleMetadata, array, basis
 from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
     AxisDirections,
@@ -14,7 +14,10 @@ from slate_core.metadata import (
 )
 from slate_core.metadata.volume import fundamental_stacked_k_points
 from slate_quantum import Operator, State
-from slate_quantum.operator import OperatorMetadata, operator_basis
+from slate_quantum.operator import (
+    OperatorMetadata,
+    operator_basis,
+)
 from tqdm import tqdm
 
 from multiscat.basis import (
@@ -77,10 +80,9 @@ def _get_parallel_kinetic_energy[
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that the array does not have and index for the perpendicular
     # direction, so we cannot use existing ContractedBasis functionality
-    assert not lobatto_metadata.is_periodic  # noqa: S101
     return np.einsum(
         "k,ik,jk->ij",
-        lobatto_metadata.quadrature_weights,
+        1 / np.square(lobatto_metadata.basis_weights),
         derivatives,
         derivatives,
     )
@@ -120,19 +122,24 @@ def get_kinetic_difference_operator[
     np.dtype[np.complexfloating],
 ]:
     """Get the matrix of kinetic energies minus the incident energy."""
-    # The parallel kinetic energy is the same for each bloch K, but is non-diagonal
+    # The parallel kinetic energy is diagonal in bloch K, but is non-diagonal
     # in the lobatto basis
-    t_ij = _get_parallel_kinetic_energy(metadata)
-    # The perpendicular kinetic energy difference is diagonal in bloch K, and is
-    # the same for each lobatto basis function
+    t_jk = _get_parallel_kinetic_energy(metadata)
+    # The perpendicular kinetic energy difference is diagonal in both the bloch K,
+    # and the lobatto basis functions. Here we scale by the lobatto weights
     d_i = _get_perpendicular_kinetic_difference(incident_k, metadata)
+    d_ijk = np.einsum(
+        "i,jk->ijk",
+        d_i,
+        np.diag(1 / np.square(metadata.children[2].basis_weights)),
+    )
 
     # The resulting difference operator is diagonal in the two bloch K indices
     # and non-diagonal in the lobatto basis
-    data = t_ij[np.newaxis, :, :] + d_i[:, np.newaxis, np.newaxis]
+    data = t_jk[np.newaxis, :, :] + d_ijk
     return Operator(
         basis=_get_kinetic_difference_operator_basis(metadata),
-        data=data.astype(np.complexfloating),
+        data=data.astype(np.complex128),
     )
 
 
@@ -157,8 +164,10 @@ def _get_scattered_state_log_derivative[
 
 def _gmres[DT: np.dtype[np.number]](
     matrix: scipy.sparse.linalg.LinearOperator,
-    initial_state: np.ndarray[Any, DT],
+    b: np.ndarray[Any, DT],
     *,
+    initial_state: np.ndarray[Any, DT] | None = None,
+    inverse_preconditioner: scipy.sparse.linalg.LinearOperator | None = None,
     options: OptimizationConfig,
 ) -> np.ndarray[Any, DT]:
     resid_bar = tqdm(total=1.0, desc="Total Convergence", position=1, leave=False)
@@ -175,9 +184,11 @@ def _gmres[DT: np.dtype[np.number]](
 
     data, _info = scipy.sparse.linalg.gmres(  # type: ignore[unknown]
         A=matrix,
-        b=initial_state,
+        b=b,
+        x0=initial_state,
         rtol=options.precision,
         maxiter=options.max_iterations,
+        M=inverse_preconditioner,
         callback=_callback,
         callback_type="pr_norm",
     )
@@ -217,22 +228,16 @@ def _get_scattered_state[
     state_basis = close_coupling_basis(state_metadata)
     nx, ny, nz = state_metadata.shape
 
-    # TODO: use split operator here ...  # noqa: FIX002
-    potential_raw = potential.with_basis(
-        operator_basis(state_basis),
-    ).raw_data.reshape(
-        (nx * ny * nz, nx * ny * nz),
-    )
+    fundamental_state_basis = basis.from_metadata(state_metadata)
+    potential_diagonal = array.extract_diagonal(potential)
+    potential_raw = potential_diagonal.with_basis(fundamental_state_basis).raw_data
     kinetic_raw = kinetic_difference.raw_data.reshape(
         (nx, ny, nz, nz),
     )
 
-    initial_state = np.zeros((nx, ny, nz), dtype=np.complexfloating)
-    initial_state[0, 0, -1] = 1.0
-
     def matmul_hamiltonian(
         state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
-    ) -> float:
+    ) -> np.ndarray[tuple[int], np.dtype[np.complexfloating]]:
         """Cost function for the GMRES solver."""
         # The cost function is the kinetic energy minus the potential energy
         cost_kinetic = np.einsum(
@@ -241,15 +246,51 @@ def _get_scattered_state[
             state.reshape((nx, ny, nz)),
         ).ravel()
         # Note that the potential is likely to be sparse, since only a few
-        # terms in a band along the diagonal are non-zero.
+        # terms of v(k) are non-zero.
         # For performance, we should use a sparse matrix here!
-        # TODO: can we do this more effiecently using fourier transforms? # noqa: FIX002
-        cost_potential = np.einsum(
-            "ij,j->i",
+        # TODO: can we do this more effiecently? # noqa: FIX002
+        # We convert the state into position space, and then
+        # multiply by the potential before converting back
+        # This is essentially the split operator method.
+        potential = np.einsum(
+            "i,i->i",
             potential_raw,
-            state.ravel(),
+            Array(state_basis, state.ravel())
+            .with_basis(fundamental_state_basis)
+            .raw_data,
+        )
+        cost_potential = (
+            Array(fundamental_state_basis, potential).with_basis(state_basis).raw_data
         )
         return cost_kinetic + cost_potential
+
+    # Build the inverse_preconditioner. this is a matrix which
+    # approximates the inverse of the Hamiltonian, but is easier to
+    # invert.
+    # We use a bloch diagonal Hamiltonian here, which is the kinetic energy
+    # plus the potential energy at V_{G=0}
+    diagonal_potential = (
+        potential_diagonal.with_basis(state_basis)
+        .raw_data.reshape((nx, ny, nz))[0, 0]
+        .reshape((1, 1, nz))
+    )
+    bloch_diagonal_hamiltonian = kinetic_raw + diagonal_potential
+    inverse_preconditioner = np.linalg.inv(bloch_diagonal_hamiltonian)
+
+    def matmul_preconditioner(
+        state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complexfloating]]:
+        """Cost function for the GMRES solver."""
+        # The cost function is the kinetic energy minus the potential energy
+        return np.einsum(
+            "ijkl,ijl->ijk",
+            inverse_preconditioner,
+            state.reshape((nx, ny, nz)),
+        ).ravel()
+
+    incoming = np.zeros((nx, ny, nz), dtype=np.complex128)
+    # TODO: is this 1.0 or some normalized value?
+    incoming[0, 0, -1] = 1 / (state_metadata.children[2].basis_weights[-1])
 
     # TODO: to make gmres work 'well', we need to build the  # noqa: FIX002
     # correct preconditioner
@@ -262,11 +303,16 @@ def _get_scattered_state[
     # manually add the initial condition each iteration? Is this even needed?
     data = _gmres(  # type: ignore[unknown]
         matrix=scipy.sparse.linalg.LinearOperator(
-            shape=potential_raw.shape,
+            shape=(state_metadata.fundamental_size, state_metadata.fundamental_size),
             matvec=matmul_hamiltonian,  # type: ignore[call-arg]
-            dtype=np.complexfloating,
+            dtype=np.complex128,
         ),
-        initial_state=initial_state.ravel(),
+        b=-matmul_hamiltonian(incoming.ravel()),
+        inverse_preconditioner=scipy.sparse.linalg.LinearOperator(
+            shape=(state_metadata.fundamental_size, state_metadata.fundamental_size),
+            matvec=matmul_preconditioner,  # type: ignore[call-arg]
+            dtype=np.complex128,
+        ),
         options=options,
     )
     return State(state_basis, data)

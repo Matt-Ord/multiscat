@@ -59,25 +59,3 @@ if __name__ == "__main__":
         ),
     )
     fig.show()
-
-    morse_potential = operator.build.corrugated_morse_potential(
-        lobatto_metadata,
-        operator.build.CorrugatedMorseParameters(
-            depth=10,
-            height=0.8,
-            offset=0.8,
-            beta=4,
-        ),
-    ).as_type(np.complex128)
-    fig, ax, _anim2 = plot.array_against_axes_2d(
-        array.extract_diagonal(morse_potential),
-        axes=(0, 2),
-    )
-    ax.set_title(
-        (
-            "A corrugated Morse potential,\n"
-            f"in a lobatto basis with ({lobatto_metadata.shape}) points"
-        ),
-    )
-    fig.show()
-    plot.wait_for_close()

@@ -1,6 +1,6 @@
 import numpy as np
 from slate_core import plot
-from slate_core.metadata import LabelSpacing, LobattoSpacedMetadata
+from slate_core.metadata import Domain, LobattoSpacedMetadata
 
 from multiscat.polynomial import get_polynomials
 
@@ -26,19 +26,19 @@ if __name__ == "__main__":
     fig, ax = plot.get_figure()
     for meta in [
         # N=2 corresponds to the trapezium rule
-        LobattoSpacedMetadata(2, spacing=LabelSpacing(delta=7)),
+        LobattoSpacedMetadata(2, domain=Domain(delta=7)),
         # N=3 corresponds to Simpson's rule
-        LobattoSpacedMetadata(3, spacing=LabelSpacing(delta=10)),
-        LobattoSpacedMetadata(5, spacing=LabelSpacing(delta=49)),
-        LobattoSpacedMetadata(11, spacing=LabelSpacing(delta=700)),
-        LobattoSpacedMetadata(25, spacing=LabelSpacing(delta=3)),
-        LobattoSpacedMetadata(31, spacing=LabelSpacing(delta=5)),
-        LobattoSpacedMetadata(300, spacing=LabelSpacing(delta=5)),
+        LobattoSpacedMetadata(3, domain=Domain(delta=10)),
+        LobattoSpacedMetadata(5, domain=Domain(delta=49)),
+        LobattoSpacedMetadata(11, domain=Domain(delta=700)),
+        LobattoSpacedMetadata(25, domain=Domain(delta=3)),
+        LobattoSpacedMetadata(31, domain=Domain(delta=5)),
+        LobattoSpacedMetadata(300, domain=Domain(delta=5)),
     ]:
         average_step = meta.delta / meta.fundamental_size
         (line,) = ax.plot(
             meta.values / meta.delta,
-            meta.quadrature_weights / average_step,
+            1 / (meta.basis_weights * np.sqrt(average_step)),
         )
     ax.set_xlabel("Lobatto Point (normalized)")
     ax.set_ylabel("Lobatto Weights/ Average Step Size")
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     # we need a better aproach!
     lobatto_metadata = LobattoSpacedMetadata(
         35,
-        spacing=LabelSpacing(delta=2.0),
+        domain=Domain(delta=2.0),
     )
 
     points = np.linspace(

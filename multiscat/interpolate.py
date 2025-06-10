@@ -83,7 +83,7 @@ def interpolate_potential[
         )
         # TODO: We need to add weights to a general LabelledMetadata  # noqa: FIX002
         # if they are not EvenlySpaced
-        * metadata.children[2].quadrature_weights,
+        / np.square(metadata.children[2].basis_weights),
         2,
         converted.raw_data.reshape(old_state_metadata.shape),
     )
@@ -110,5 +110,5 @@ def interpolate_potential[
     out_basis = position_operator_basis(outer_basis)
     return Operator(
         AsUpcast(out_basis, TupleMetadata((metadata, metadata))),
-        interpolated.astype(np.complexfloating),
+        interpolated.astype(np.complex128),
     )

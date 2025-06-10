@@ -5,16 +5,13 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 if TYPE_CHECKING:
-    from slate_core.metadata import SpacedMetadata
+    from slate_core.metadata import BarycentricMetadata
 
 
 def get_unnormalized_polynomials(
-    metadata: SpacedMetadata[np.dtype[np.floating]],
+    metadata: BarycentricMetadata,
 ) -> list[np.polynomial.Polynomial]:
     """Get the lobatto polynomials for the lobatto points."""
-    if metadata.is_periodic:
-        msg = "Currently we do not support periodic metadata."
-        raise NotImplementedError(msg)
     domain = np.array([metadata.values[0], metadata.values[-1]])
     polynomials = [
         cast(
@@ -34,21 +31,21 @@ def get_unnormalized_polynomials(
 
 
 def get_polynomials(
-    metadata: SpacedMetadata[np.dtype[np.floating]],
+    metadata: BarycentricMetadata,
 ) -> list[np.polynomial.Polynomial]:
     """Get the weighted lobatto polynomials for the lobatto points."""
     return [
-        p / np.sqrt(w)
+        p * w
         for (p, w) in zip(
             get_unnormalized_polynomials(metadata),
-            metadata.quadrature_weights,
+            metadata.basis_weights,
             strict=True,
         )
     ]
 
 
 def get_derivative_polynomials(
-    metadata: SpacedMetadata[np.dtype[np.floating]],
+    metadata: BarycentricMetadata,
 ) -> list[np.polynomial.Polynomial]:
     """Get the derivative polynomials for the lobatto points."""
     return [p.deriv() for p in get_polynomials(metadata)]
@@ -57,7 +54,7 @@ def get_derivative_polynomials(
 # TODO: we should specify the interpolation type, e.g. lagrange  # noqa: FIX002
 # vs fourier in the metadata.
 def get_barycentric_derivatives(
-    metadata: SpacedMetadata[np.dtype[np.floating]],
+    metadata: BarycentricMetadata,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     r"""
     Compute the derivative matrix M_ij = u_i'(x_j) using barycentric interpolation.
@@ -89,4 +86,4 @@ def get_barycentric_derivatives(
 
     derivatives = scaled_derivatives * scale_factor
 
-    return derivatives.T / np.sqrt(metadata.quadrature_weights[:, np.newaxis])
+    return derivatives.T * metadata.basis_weights[:, np.newaxis]
