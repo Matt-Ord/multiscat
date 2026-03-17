@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
+from slate_core.metadata import PERIODIC_FEATURE
 
 if TYPE_CHECKING:
     from slate_core.metadata import SpacedMetadata
@@ -12,7 +13,7 @@ def get_unnormalized_polynomials(
     metadata: SpacedMetadata[np.dtype[np.floating]],
 ) -> list[np.polynomial.Polynomial]:
     """Get the lobatto polynomials for the lobatto points."""
-    if metadata.is_periodic:
+    if PERIODIC_FEATURE in metadata.features:
         msg = "Currently we do not support periodic metadata."
         raise NotImplementedError(msg)
     domain = np.array([metadata.values[0], metadata.values[-1]])
@@ -41,7 +42,7 @@ def get_polynomials(
         p / np.sqrt(w)
         for (p, w) in zip(
             get_unnormalized_polynomials(metadata),
-            metadata.quadrature_weights,
+            metadata.basis_weights,
             strict=True,
         )
     ]
@@ -89,4 +90,4 @@ def get_barycentric_derivatives(
 
     derivatives = scaled_derivatives * scale_factor
 
-    return derivatives.T / np.sqrt(metadata.quadrature_weights[:, np.newaxis])
+    return derivatives.T / np.sqrt(metadata.basis_weights[:, np.newaxis])
