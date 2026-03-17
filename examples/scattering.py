@@ -12,7 +12,7 @@ from multiscat.config import ScatteringCondition
 from multiscat.multiscat import get_scattered_state
 
 HELIUM_MASS = physical_constants["alpha particle mass"][0]
-UNIT_CELL = 2.84 * angstrom
+UNIT_CELL = 8 * angstrom
 Z_HEIGHT = 3 * angstrom  # TODO: double check this value  # noqa: FIX002
 
 MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(

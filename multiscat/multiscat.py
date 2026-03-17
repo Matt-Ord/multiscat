@@ -136,23 +136,7 @@ def get_kinetic_difference_operator[
     )
 
 
-def _get_scattered_state_log_derivative[
-    M0: EvenlySpacedLengthMetadata,
-    M1: LobattoSpacedMetadata,
-    E: AxisDirections,
-](
-    kinetic_difference: Operator[
-        KineticDifferenceOperatorBasis[M0, M1, E],
-        np.dtype[np.complexfloating],
-    ],
-    potential: ScatteringOperator[M0, M1, E],
-    *,
-    options: OptimizationConfig,
-) -> State[CloseCouplingBasis[M0, M1, E]]:
-    # TODO: build the necessary operators for the log derivative  # noqa: FIX002
-    # functional.
-    msg = "This function is not implemented yet. "
-    raise NotImplementedError(msg)
+
 
 
 def _gmres[DT: np.dtype[np.number]](
@@ -194,7 +178,7 @@ def _gmres[DT: np.dtype[np.number]](
     return cast("np.ndarray[Any, DT]", data)
 
 
-def _get_scattered_state[
+def _get_scattered_state[ # pyright: ignore[reportUnusedFunction]
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedMetadata,
     E: AxisDirections,
@@ -272,6 +256,8 @@ def _get_scattered_state[
     return State(state_basis, data)
 
 
+
+
 def get_scattered_state[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
@@ -282,19 +268,10 @@ def get_scattered_state[
     options: OptimizationConfig | None = None,
 ) -> State[CloseCouplingBasis[M0, M1, E]]:
     options = options or OptimizationConfig()
-    kinetic_difference = get_kinetic_difference_operator(
+    _kinetic_difference = get_kinetic_difference_operator(
         condition.incident_k,
         condition.metadata,
     )
-    if options.method == "log_derivative":
-        return _get_scattered_state_log_derivative(
-            kinetic_difference,
-            condition.potential,
-            options=options,
-        )
 
-    return _get_scattered_state(
-        kinetic_difference,
-        condition.potential,
-        options=options,
-    )
+    msg = "This function is not implemented yet."
+    raise NotImplementedError(msg)

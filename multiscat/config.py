@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.constants import hbar  # type: ignore[import-untyped]
@@ -41,17 +41,17 @@ class ScatteringCondition[
 
     @staticmethod
     def from_angles[
-        _M0: EvenlySpacedLengthMetadata,
-        _M1: LobattoSpacedMetadata,
-        _E: AxisDirections,
+        M01: EvenlySpacedLengthMetadata,
+        M11: LobattoSpacedMetadata,
+        E1: AxisDirections,
     ](
         *,
         mass: float,
         theta: float = 0,
         phi: float = 0,
         energy: float,
-        potential: ScatteringOperator[_M0, _M1, _E],
-    ) -> ScatteringCondition[_M0, _M1, _E]:
+        potential: ScatteringOperator[M01, M11, E1],
+    ) -> ScatteringCondition[M01, M11, E1]:
         """Create a scattering condition from angles."""
         # Energy = hbar**2 k**2 / (2 * mass)
         abs_k = (2 * mass * energy) ** 0.5 / hbar
