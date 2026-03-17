@@ -20,7 +20,6 @@ class OptimizationConfig:
 
     precision: float = 1e-5
     max_iterations: int = 1000
-    method: Literal["hamiltonian", "log_derivative"] = "hamiltonian"
 
 
 @dataclass(frozen=True, kw_only=True)

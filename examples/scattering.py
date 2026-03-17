@@ -36,8 +36,9 @@ if __name__ == "__main__":
     # originally simulated in https://doi.org/10.1063/1.1679617.
     condition = ScatteringCondition.from_angles(
         mass=HELIUM_MASS,
-        energy=100 * electron_volt * 10**-3,
-        theta=30,
+        energy=20 * electron_volt * 10**-3,
+        theta=np.deg2rad(30),
+        phi=0,
         potential=operator.build.corrugated_morse_potential(
             metadata,
             MORSE_PARAMETERS,
