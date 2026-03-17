@@ -1,5 +1,5 @@
 import warnings
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
@@ -7,6 +7,7 @@ import scipy.sparse.linalg  # type: ignore[import-untyped]
 from slate_core import SimpleMetadata, TupleBasis, TupleMetadata
 from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
+    PERIODIC_FEATURE,
     AxisDirections,
     EvenlySpacedLengthMetadata,
     LobattoSpacedLengthMetadata,
@@ -24,8 +25,10 @@ from multiscat.basis import (
     split_scattering_metadata,
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
-from multiscat.interpolate import ScatteringOperator
 from multiscat.polynomial import get_barycentric_derivatives
+
+if TYPE_CHECKING:
+    from multiscat.interpolate import ScatteringOperator
 
 type KineticDifferenceOperatorBasis[
     M0: SimpleMetadata,
@@ -77,10 +80,10 @@ def _get_parallel_kinetic_energy[
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that the array does not have and index for the perpendicular
     # direction, so we cannot use existing ContractedBasis functionality
-    assert not lobatto_metadata.is_periodic  # noqa: S101
+    assert PERIODIC_FEATURE not in lobatto_metadata.features  # noqa: S101
     return np.einsum(
         "k,ik,jk->ij",
-        lobatto_metadata.quadrature_weights,
+        lobatto_metadata.basis_weights,
         derivatives,
         derivatives,
     )
