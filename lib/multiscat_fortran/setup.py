@@ -33,7 +33,7 @@ class F2PyBuildExt(build_ext):  # noqa: D101
         module_name = "_multiscat_f2py"
         expected_output = build_temp / f"{module_name}{ext_suffix}"
 
-        fflags = f"-I{fortran_dir} -ffixed-line-length-none -mcmodel=medium"
+        fflags = f"-I{fortran_dir} -ffixed-line-length-none"
 
         command = [
             sys.executable,

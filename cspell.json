@@ -29,6 +29,7 @@
         "cflags",
         "cmdclass",
         "complexfloating",
+        "cpptools",
         "diagsub",
         "diffrac",
         "dtype",
@@ -36,6 +37,7 @@
         "esbenp",
         "f2py",
         "fcflags",
+        "ffixed",
         "fflags",
         "fromroots",
         "gfortran",
@@ -63,6 +65,7 @@
         "preconditioner",
         "pylance",
         "pyproject",
+        "pyright",
         "pytest",
         "resid",
         "rtol",
@@ -78,9 +81,7 @@
         "wolken",
         "wyatt",
         "xlabel",
-        "ylabel",
-        "cpptools",
-        "pyright"
+        "ylabel"
     ],
     "flagWords": [
         "hte",
