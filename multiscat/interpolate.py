@@ -91,7 +91,7 @@ def interpolate_potential[
     )
 
     # The basis of the interpolated potential
-    # Parralel to the surface, we still have a transformed basis, but we may
+    # Parallel to the surface, we still have a transformed basis, but we may
     # be interpolating onto a finer grid. We therefore have a cropped basis
     # in the x and y directions.
     # The z direction is still a fundamental basis.

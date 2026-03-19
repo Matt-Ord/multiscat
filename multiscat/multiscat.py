@@ -111,7 +111,7 @@ def _get_perpendicular_kinetic_difference[
     d^2 = |k in + k scatter|**2 - |k in|**2
     """
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
-    # basis. Issue is that the array does not have and index for the parrallel
+    # basis. Issue is that the array does not have and index for the parallel
     # direction, so we cannot use existing ContractedBasis functionality
     metadata_x01, _ = split_scattering_metadata(metadata)
     (kx, ky) = fundamental_stacked_k_points(metadata_x01, offset=incident_k[:2])
@@ -234,7 +234,7 @@ def _get_scattered_state[  # pyright: ignore[reportUnusedFunction]
         # Note that the potential is likely to be sparse, since only a few
         # terms in a band along the diagonal are non-zero.
         # For performance, we should use a sparse matrix here!
-        # TODO: can we do this more effiecently using fourier transforms? # noqa: FIX002
+        # TODO: can we do this more efficiently using fourier transforms? # noqa: FIX002
         cost_potential = np.einsum(
             "ij,j->i",
             potential_raw,

@@ -8,7 +8,7 @@ from multiscat.interpolate import interpolate_potential
 
 if __name__ == "__main__":
     # An example of building a simple scattering potential.
-    # Intially, we create a potential in a fourier basis, as this
+    # Initially, we create a potential in a fourier basis, as this
     # is the most common representation we would get from e.g. a DFT calculation.
     metadata = _metadata.spaced_volume_metadata_from_stacked_delta_x(
         (np.array([np.pi, 0, 0]), np.array([0, np.pi, 0]), np.array([0, 0, 10])),

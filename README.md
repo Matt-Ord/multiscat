@@ -5,7 +5,7 @@ Multiscat is a software package for simulating the scattering of atoms off of su
 ## Non-Reactive Scattering Calculations
 
 At it's core, Multiscat is designed to perform non-reactive scattering calculations
-of single atoms off a periodic surface. The behaviour of the atom can be described
+of single atoms off a periodic surface. The behavior of the atom can be described
 by the Schrödinger equation
 
 $$
@@ -83,7 +83,7 @@ $$
 - \frac{2m}{\hbar^2}\sum_{\mathbf{G}'} V_{ \mathbf{G}' - \mathbf{G}}(z) \Psi_{\mathbf{G}'}(z)
 $$
 
-these are then soloved, subject to the boundary conditions
+these are then solved, subject to the boundary conditions
 
 - $\Psi_{\mathbf{G}}(z) \to 0$ as $z \to -\infty$
 - $\Psi_{\mathbf{G}}(z) \to 0$ as $z \to \infty$ for closed channels
