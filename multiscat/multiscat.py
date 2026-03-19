@@ -302,26 +302,16 @@ def _condition_parameters(
     return mass_amu, energy_mev, theta_degrees, phi_degrees
 
 
-def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int, float, int]:
+def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int]:
     if config.precision <= 0:
         msg = "Optimization precision must be greater than zero"
         raise ValueError(msg)
 
     gmres_preconditioner_flag = 0
     convergence_significant_figures = int(np.log10(1 / config.precision))
-    max_closed_channel_energy = (
-        float(config.max_negative_energy / (electron_volt * 10**-3))
-        if config.max_negative_energy is not None
-        else 120.0
-    )
-    max_channel_index = int(
-        config.max_channel_index if config.max_channel_index is not None else 120,
-    )
     return (
         gmres_preconditioner_flag,
         convergence_significant_figures,
-        max_closed_channel_energy,
-        max_channel_index,
     )
 
 
@@ -407,8 +397,6 @@ def run_multiscat(
     (
         gmres_preconditioner_flag,
         convergence_significant_figures,
-        max_closed_channel_energy,
-        max_channel_index,
     ) = _optimization_parameters(config)
     (
         nkx,
@@ -423,7 +411,7 @@ def run_multiscat(
         potential_values,
     ) = _potential_parameters(condition.potential)
 
-    max_channels = 1024
+    max_channels = nkx * nky
     (
         channel_count,
         channel_ix,
@@ -441,18 +429,16 @@ def run_multiscat(
         phi_degrees,
         gmres_preconditioner_flag,
         convergence_significant_figures,
-        max_closed_channel_energy,
-        max_channel_index,
-        nkx,
-        nky,
-        unit_cell_ax,
-        unit_cell_ay,
-        unit_cell_bx,
-        unit_cell_by,
-        zmin,
-        zmax,
-        potential_values,
-        max_channels,
+        nkx=nkx,
+        nky=nky,
+        unit_cell_ax=unit_cell_ax,
+        unit_cell_ay=unit_cell_ay,
+        unit_cell_bx=unit_cell_bx,
+        unit_cell_by=unit_cell_by,
+        zmin=zmin,
+        zmax=zmax,
+        potential_values=potential_values,
+        max_channels=max_channels,
         nz=nz,
     )
 

@@ -4,83 +4,146 @@ module scatsub_basis
    private
 
    integer, parameter :: dp = real64
-   integer, parameter :: nmax_basis = 1024
    integer, parameter :: mmax = 550
 
+   public :: UnitVectors
+   public :: ReciprocalVectors
+   public :: ScatteringData
    public :: ChannelBasisData
-   public :: populate_momentum_basis
+   public :: build_reciprocal_vectors
+   public :: get_perpendicular_momentum
+   public :: perpendicular_momentum_as_legacy_data
    public :: build_lobatto_t_matrix
    public :: compute_wave_terms
+
+   type :: UnitVectors
+      real(dp) :: ax1 = 0.0_dp
+      real(dp) :: ay1 = 0.0_dp
+      real(dp) :: bx1 = 0.0_dp
+      real(dp) :: by1 = 0.0_dp
+   end type UnitVectors
+
+   type :: ReciprocalVectors
+      real(dp) :: gax = 0.0_dp
+      real(dp) :: gay = 0.0_dp
+      real(dp) :: gbx = 0.0_dp
+      real(dp) :: gby = 0.0_dp
+   end type ReciprocalVectors
+
+   type :: ScatteringData
+      real(dp) :: helium_mass = 0.0_dp
+      real(dp) :: incident_energy_mev = 0.0_dp
+      real(dp) :: theta_degrees = 0.0_dp
+      real(dp) :: phi_degrees = 0.0_dp
+   end type ScatteringData
 
    type :: ChannelBasisData
       integer :: channel_count = 0
       integer :: specular_channel_index = 0
-      integer :: channel_index_x(nmax_basis) = 0
-      integer :: channel_index_y(nmax_basis) = 0
-      real(dp) :: channel_energy_z(nmax_basis) = 0.0_dp
+      integer, allocatable :: channel_index_x(:)
+      integer, allocatable :: channel_index_y(:)
+      real(dp), allocatable :: channel_energy_z(:)
    end type ChannelBasisData
 
 contains
 
-   subroutine populate_momentum_basis( &
-   & basis_data, max_closed_channel_energy, max_channel_index, &
-   & unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by, &
-   & helium_mass, incident_energy_mev, theta_degrees, phi_degrees)
+   subroutine build_reciprocal_vectors(unit_vectors, reciprocal_vectors)
       implicit none
-      type(ChannelBasisData), intent(inout) :: basis_data
-      real(dp), intent(in) :: max_closed_channel_energy
-      integer, intent(in) :: max_channel_index
-      real(dp), intent(in) :: unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by
-      real(dp), intent(in) :: helium_mass
-      real(dp), intent(in) :: incident_energy_mev, theta_degrees, phi_degrees
+      real(dp), parameter :: pi = 3.141592653589793_dp
+      type(UnitVectors), intent(in) :: unit_vectors
+      type(ReciprocalVectors), intent(out) :: reciprocal_vectors
+      real(dp) :: auc, recunit
+
+      auc = abs(unit_vectors%ax1*unit_vectors%by1-unit_vectors%ay1*unit_vectors%bx1)
+      if (auc .le. 0.0d0) error stop 'ERROR: unit cell area must be positive.'
+      recunit = 2*pi/auc
+      reciprocal_vectors%gax =  unit_vectors%by1*recunit
+      reciprocal_vectors%gay = -unit_vectors%bx1*recunit
+      reciprocal_vectors%gbx = -unit_vectors%ay1*recunit
+      reciprocal_vectors%gby =  unit_vectors%ax1*recunit
+   end subroutine build_reciprocal_vectors
+
+   subroutine get_perpendicular_momentum( &
+   & perpendicular_momentum, nx, ny, unit_vectors, scattering_data)
+      implicit none
+      real(dp), intent(out) :: perpendicular_momentum(nx, ny)
+      integer, intent(in) :: nx, ny
+      type(UnitVectors), intent(in) :: unit_vectors
+      type(ScatteringData), intent(in) :: scattering_data
 
       real(dp), parameter :: pi = 3.141592653589793_dp
       real(dp) :: rmlmda
-      real(dp) :: auc, recunit, ered, thetad, phid, pkx, pky
-      real(dp) :: gax, gay, gbx, gby
-      real(dp) :: gx, gy, eint, di
-      integer :: i1, i2
+      real(dp) :: ered, thetad, phid, pkx, pky
+      real(dp) :: gx, gy
+      integer :: i, j, i0, j0, igx, igy
+      type(ReciprocalVectors) :: reciprocal_vectors
 
-      rmlmda = 2.0_dp * helium_mass / 4.18020_dp
+      call build_reciprocal_vectors(unit_vectors, reciprocal_vectors)
 
-      auc = abs(unit_cell_ax*unit_cell_by-unit_cell_ay*unit_cell_bx)
-      if (auc .le. 0.0d0) error stop 'ERROR: unit cell area must be positive.'
-      recunit = 2*pi/auc
-      gax =  unit_cell_by*recunit
-      gay = -unit_cell_bx*recunit
-      gbx = -unit_cell_ay*recunit
-      gby =  unit_cell_ax*recunit
-
-      ered   = rmlmda*incident_energy_mev
-      thetad = theta_degrees*pi/180.0d0
-      phid   = phi_degrees*pi/180.0d0
+      rmlmda = 2.0_dp * scattering_data%helium_mass / 4.18020_dp
+      ered   = rmlmda*scattering_data%incident_energy_mev
+      thetad = scattering_data%theta_degrees*pi/180.0d0
+      phid   = scattering_data%phi_degrees*pi/180.0d0
 
       pkx = sqrt(ered)*sin(thetad)*cos(phid)
       pky = sqrt(ered)*sin(thetad)*sin(phid)
 
-      basis_data%channel_count = 0
+      do i = 1, nx
+         i0 = i - 1
+         igx = i0
+         if (i0 .gt. ((nx - 1) / 2)) igx = i0 - nx
+         do j = 1, ny
+            j0 = j - 1
+            igy = j0
+            if (j0 .gt. ((ny - 1) / 2)) igy = j0 - ny
+            gx = reciprocal_vectors%gax*igx + reciprocal_vectors%gbx*igy
+            gy = reciprocal_vectors%gay*igx + reciprocal_vectors%gby*igy
+            perpendicular_momentum(i, j) = (pkx+gx)**2 + (pky+gy)**2 - ered
+         end do
+      end do
+   end subroutine get_perpendicular_momentum
+
+   function perpendicular_momentum_as_legacy_data(perpendicular_momentum) result(basis_data)
+      implicit none
+      real(dp), intent(in) :: perpendicular_momentum(:,:)
+      type(ChannelBasisData) :: basis_data
+
+      integer :: nx, ny, i, j, idx, alloc_status
+
+      nx = size(perpendicular_momentum, 1)
+      ny = size(perpendicular_momentum, 2)
+      basis_data%channel_count = nx*ny
       basis_data%specular_channel_index = 0
-      do i1 = -max_channel_index,max_channel_index
-         do i2 = -max_channel_index,max_channel_index
-            gx = gax*i1 + gbx*i2
-            gy = gay*i1 + gby*i2
-            eint = (pkx+gx)**2 + (pky+gy)**2
-            di = eint-ered
-            if (di.lt.max_closed_channel_energy) then
-               basis_data%channel_count = basis_data%channel_count+1
-               if (basis_data%channel_count.le.nmax_basis) then
-                  basis_data%channel_index_x(basis_data%channel_count) = i1
-                  basis_data%channel_index_y(basis_data%channel_count) = i2
-                  basis_data%channel_energy_z(basis_data%channel_count) = di
-                  if ((i1.eq.0) .and. (i2.eq.0)) &
-                  & basis_data%specular_channel_index = basis_data%channel_count
-               else
-                  error stop 'ERROR: n too big! (basis)'
-               end if
+
+      allocate(basis_data%channel_index_x(basis_data%channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (basis_data%channel_index_x).'
+      allocate(basis_data%channel_index_y(basis_data%channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (basis_data%channel_index_y).'
+      allocate(basis_data%channel_energy_z(basis_data%channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (basis_data%channel_energy_z).'
+
+      idx = 0
+      do i = 1, nx
+         do j = 1, ny
+            idx = idx + 1
+            basis_data%channel_index_x(idx) = fft_mode_index(i - 1, nx)
+            basis_data%channel_index_y(idx) = fft_mode_index(j - 1, ny)
+            basis_data%channel_energy_z(idx) = perpendicular_momentum(i, j)
+            if (basis_data%channel_index_x(idx) .eq. 0 .and. basis_data%channel_index_y(idx) .eq. 0) then
+               basis_data%specular_channel_index = idx
             end if
          end do
       end do
-   end subroutine populate_momentum_basis
+      if (basis_data%specular_channel_index .eq. 0) error stop 'ERROR: specular channel not found.'
+   end function perpendicular_momentum_as_legacy_data
+
+   pure integer function fft_mode_index(i0, n) result(ig)
+      implicit none
+      integer, intent(in) :: i0, n
+
+      ig = i0
+      if (i0 .gt. ((n - 1) / 2)) ig = i0 - n
+   end function fft_mode_index
    subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
       implicit none
 !

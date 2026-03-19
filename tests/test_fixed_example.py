@@ -43,7 +43,7 @@ MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(
 def _parse_raw_intensities(output_file: Path) -> dict[tuple[int, int], float]:
     # Regex for lines without the '#' prefix: two ints and one float
     pattern = re.compile(
-        r"^\s*(-?\d+)\s+(-?\d+)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*"
+        r"^\s*(-?\d+)\s+(-?\d+)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*",
     )
     intensities: dict[tuple[int, int], float] = {}
 
@@ -62,23 +62,6 @@ def _parse_raw_intensities(output_file: Path) -> dict[tuple[int, int], float]:
                 intensities[(h, k)] = val
 
     return intensities
-
-
-def _load_potential_file_as_array(path: Path) -> np.ndarray:
-    lines = path.read_text().splitlines()
-    data_start = next(i for i, line in enumerate(lines) if line.strip().startswith("("))
-    lines = lines[data_start:]
-    return _load_potential_lines_as_array(lines)
-
-
-def _load_potential_lines_as_array(
-    lines: list[str],
-) -> np.ndarray[Any, np.dtype[np.complex128]]:
-    values = list[complex]()
-    for line in lines:
-        real_str, imag_str = line.strip()[1:-1].split(",")
-        values.append(complex(float(real_str), float(imag_str)))
-    return np.asarray(values, dtype=np.complex128)
 
 
 def _raw_potential_in_input_file_convention(
@@ -116,7 +99,7 @@ def _simple_example_condition() -> tuple[
             np.array([0, UNIT_CELL, 0]),
             np.array([0, 0, Z_HEIGHT]),
         ),
-        (32, 32, 550),
+        (10, 10, 550),
     )
     # This is taken from https://doi.org/10.1039/FT9908601641
     # and is a reproduction of the Wolken 4He-LiF problem in table 1,
@@ -191,7 +174,7 @@ def _rotated_example_condition() -> tuple[
             y_vector,
             np.array([0.0, 0.0, Z_HEIGHT]),
         ),
-        (32, 32, 550),
+        (10, 10, 550),
     )
 
     condition = ScatteringCondition.from_angles(
@@ -240,8 +223,8 @@ def test_raw_potential_in_input_file_convention() -> None:
     condition, _ = _simple_example_condition()
     from_condition = _raw_potential_in_input_file_convention(condition.potential)
 
-    reference_potential = TESTS_DIR / "data" / "pot10001.in"
-    expected = _load_potential_file_as_array(reference_potential)
+    reference_potential = TESTS_DIR / "data" / "expected_potential.npy"
+    expected = np.load(reference_potential)
 
     np.testing.assert_equal(expected.shape, from_condition.shape)
     np.testing.assert_allclose((from_condition), (expected), rtol=1e-5, atol=1e-10)
