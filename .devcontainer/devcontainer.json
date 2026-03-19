@@ -77,7 +77,9 @@
 				"peakchen90.open-html-in-browser",
 				"github.vscode-github-actions",
 				"GitHub.copilot",
-				"ms-python.vscode-pylance"
+				"ms-python.vscode-pylance",
+				"ms-vscode.cpptools",
+				"fortran-lang.linter-gfortran",
 			]
 		}
 	},

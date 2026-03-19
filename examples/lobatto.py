@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
     # TODO: this breaks around 35 points  # noqa: FIX002
     # This is due to an issue with finding the Legendre derivative roots
-    # we need a better aproach!
+    # we need a better approach!
     lobatto_metadata = LobattoSpacedMetadata(
         35,
         domain=Domain(delta=2.0),
