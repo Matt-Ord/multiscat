@@ -1,8 +1,10 @@
 subroutine get_momentum_basis( &
 & channel_count, specular_channel_index, channel_index_x, channel_index_y, &
-& channel_energy_z, max_closed_channel_energy, max_channel_index &
+& channel_energy_z, max_closed_channel_energy, max_channel_index, &
+& ax, ay, bx, by, ei, theta, phi, rmlmda &
    )
-   implicit double precision (a-h,o-z)
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
 !
 ! calculate reciprocal lattice
 ! calculate d (z-component of energy of outgoing wave) for
@@ -28,22 +30,28 @@ subroutine get_momentum_basis( &
 ! if d(i) < 0, channel open, possible diffraction spot
 ! if d(i) > 0, channel closed, no spot
 !
-   include 'multiscat.inc'
-   integer channel_count, specular_channel_index, max_channel_index
-   dimension channel_energy_z(nmax)
-   integer channel_index_x(nmax), channel_index_y(nmax)
+   integer, parameter :: dp = real64
+   integer, parameter :: nmax = 1024
+   integer, intent(out) :: channel_count, specular_channel_index
+   integer, intent(in) :: max_channel_index
+   real(dp), intent(out) :: channel_energy_z(nmax)
+   integer, intent(out) :: channel_index_x(nmax), channel_index_y(nmax)
+   real(dp), intent(in) :: max_closed_channel_energy
+   real(dp), intent(in) :: ax, ay, bx, by, ei, theta, phi, rmlmda
 
-   common /cells/ ax,ay,bx,by,ei,theta,phi,a0,gax,gay,gbx,gby
-   common /const/ hemass,rmlmda ! = 2m/h^2 !modified by Boyao on 6 Dec 2020
-   DATA   Pi /3.141592653589793d0/
+   real(dp), parameter :: pi = 3.141592653589793_dp
+   real(dp) :: auc, recunit, ered, thetad, phid, pkx, pky
+   real(dp) :: gax, gay, gbx, gby
+   real(dp) :: gx, gy, eint, di
+   integer :: i1, i2
 
-   Auc=dabs(ax*by-ay*bx)
-   if (Auc .le. 0.0d0) error stop 'ERROR: unit cell area must be positive.'
-   RecUnit=2*Pi/Auc
-   gax =  by*RecUnit
-   gay = -bx*RecUnit
-   gbx = -ay*RecUnit
-   gby =  ax*RecUnit
+   auc=abs(ax*by-ay*bx)
+   if (auc .le. 0.0d0) error stop 'ERROR: unit cell area must be positive.'
+   recunit=2*pi/auc
+   gax =  by*recunit
+   gay = -bx*recunit
+   gbx = -ay*recunit
+   gby =  ax*recunit
 
    ered   = rmlmda*ei ! ered is just k_i^2
    thetad = theta*pi/180.0d0
@@ -80,8 +88,8 @@ end subroutine get_momentum_basis
 
 
 subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
-   implicit double precision (a-h,o-z)
-   include 'multiscat.inc'
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
 !
 ! -----------------------------------------------------------------
 ! This subroutine calculates the kinetic energy matrix, T,
@@ -96,10 +104,16 @@ subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
 ! In that paper Lobatto shape functions (Lsf) are defined
 ! -----------------------------------------------------------------
 !
-   integer n_z_points, alloc_status
-   dimension w(n_z_points),x(n_z_points),t(n_z_points,n_z_points)
+   integer, parameter :: dp = real64
+   real(dp), intent(in) :: z_min, z_max
+   integer, intent(in) :: n_z_points
+   integer, parameter :: mmax = 550
+   real(dp), intent(out) :: w(n_z_points),x(n_z_points),t(n_z_points,n_z_points)
+   integer :: alloc_status
+   integer :: n, i, j, k
+   real(dp) :: ff, gg, hh
 
-   double precision, allocatable :: ww(:), xx(:), tt(:,:)
+   real(dp), allocatable :: ww(:), xx(:), tt(:,:)
    if (n_z_points .gt. mmax) error stop 'tshape 1'
 
 ! I think, that this is needed for the sum defined in Lsf to work
@@ -110,15 +124,15 @@ subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
    call compute_lobatto_rule (z_min,z_max,n,ww,xx)
 
 ! No idea why it's done
-   do 1 i = 1,n
+   do i = 1,n
       ww(i) = sqrt(ww(i))
-1  continue
+   end do
 
-   do 4 i = 1,n
+   do i = 1,n
       ff = 0.0d0
-      do 3 j = 1,n
+      do j = 1,n
 ! gg of i = j is trivially = 0, so no need for loops
-         if (j .eq. i) go to 3
+         if (j .eq. i) cycle
 
 ! gg will be value of derivative of j-th Lsf at
 ! i-th root, which is: i-th Lsf evaluated at j-th
@@ -126,14 +140,14 @@ subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
          gg = 1.0d0/(xx(i)-xx(j))
          ff = ff+gg
 
-         do 2 k = 1,n
+         do k = 1,n
 
 ! This loop multiplies gg defined above by j-th Lsf
 ! evaluated at i-th root, which is itself a Lagrangian interpolation
-            if (k.eq.j .or. k.eq.i) go to 2
+            if (k.eq.j .or. k.eq.i) cycle
             gg = gg*(xx(j)-xx(k))/(xx(i)-xx(k))
 
-2        continue
+         end do
 
 ! Write into tt value of derivative of j-th Lsf
 ! evaluated at i-th root. This relation is described in the paper mentioned
@@ -141,12 +155,12 @@ subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
          tt(j,i) = ww(j)*gg/ww(i)
 ! this appears wrong going by the given paper
 
-3     continue
+      end do
 ! tt of i,i is 0 as the i-th Lsf has a maximum at the i-th root, unless i=1 or i=n
       tt(i,i) = ff
 
-4  continue
-   do 7 i = 1,n_z_points
+   end do
+   do i = 1,n_z_points
 ! In this approach 1: roots are in decreasing order
 ! 2: last root ( 0 ) doesn't get included in calculations
 ! but subroutine lobatto returns roots and weights in
@@ -154,10 +168,10 @@ subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
       w(i) = ww(i+1)
       x(i) = xx(i+1)
 
-      do 6 j = 1,i
+      do j = 1,i
 
          hh = 0.0d0
-         do 5 k = 1,n
+         do k = 1,n
 ! Entries in T matrix are defined as a sum over all k from 0
 ! to n+1 of:
 
@@ -166,14 +180,14 @@ subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
 ! of j-th Lsf at k-th root ]
 
             hh = hh + tt(k,i+1)*tt(k,j+1)
-5        continue
+         end do
 ! t is symmetric
          t(i,j) = hh
          t(j,i) = hh
 
-6     continue
+      end do
 
-7  continue
+   end do
    if (allocated(ww)) deallocate(ww)
    if (allocated(xx)) deallocate(xx)
    if (allocated(tt)) deallocate(tt)
@@ -183,7 +197,8 @@ end subroutine build_lobatto_t_matrix
 
 
 subroutine compute_lobatto_rule (interval_min,interval_max,node_count,w,x)
-   implicit double precision (a-h,o-z)
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
 ! -----------------------------------------------------------------
 ! This subroutine calculates an n-point Gauss-Lobatto
 ! quadrature rule in the interval a < x < b.
@@ -196,9 +211,13 @@ subroutine compute_lobatto_rule (interval_min,interval_max,node_count,w,x)
 !
 ! -----------------------------------------------------------------
 !
-   integer node_count
-   double precision interval_min, interval_max
-   dimension w(node_count),x(node_count)
+   integer, parameter :: dp = real64
+   integer, intent(in) :: node_count
+   real(dp), intent(in) :: interval_min, interval_max
+   real(dp), intent(out) :: w(node_count),x(node_count)
+   integer :: l, k, i, j
+   real(dp) :: pi, shift, scale, weight
+   real(dp) :: z, p1, p2, p3
 
 ! shift and scale have to be used to change integral in (a,b)
 ! to (-1,1) where lobatto quadrature works.
@@ -218,7 +237,7 @@ subroutine compute_lobatto_rule (interval_min,interval_max,node_count,w,x)
    x(1) = interval_min
    w(1) = weight
 
-   do 3 k = 2,l
+   do k = 2,l
 ! As zeros are symmetric, there is only need to find positive ones
 ! z is approximated zero of P[node_count-1] using Francesco Tricomi approximation
 ! then accuracy of the zero is improved using Newton-Raphson
@@ -227,14 +246,14 @@ subroutine compute_lobatto_rule (interval_min,interval_max,node_count,w,x)
       z = cos(pi*(4*k-3)/(4*node_count-2))
 ! Calculate value of P[node_count-1] at z using Bonnets recursive formula
 ! p1 is P[j], p2 = P[j-1], p3 = P[j-2]
-      do 2 i = 1,7
+      do i = 1,7
          p2 = 0.0d0
          p1 = 1.0d0
-         do 1 j = 1,node_count-1
+         do j = 1,node_count-1
             p3 = p2
             p2 = p1
             p1 = ((2*j-1)*z*p2-(j-1)*p3)/j
-1        continue
+         end do
 ! p2 gets overwritten to be P[node_count-1]'
          p2 = (node_count-1)*(p2-z*p1)/(1.0d0-z*z)
 ! p3 gets overwritten to be P[node_count-1]''
@@ -242,7 +261,7 @@ subroutine compute_lobatto_rule (interval_min,interval_max,node_count,w,x)
          & /(1.0d0-z*z)
 ! Actual Newton-Raphson step
          z = z-p2/p3
-2     continue
+      end do
 ! Write in shifted and scaled zeros and weights
       x(k) = shift-scale*z
 ! Write in zero with other sign
@@ -250,7 +269,7 @@ subroutine compute_lobatto_rule (interval_min,interval_max,node_count,w,x)
 ! Write in weights (they are always positive)
       w(k) = weight/(p1*p1)
       w(node_count+1-k) = w(k)
-3  continue
+   end do
 ! Specific to Lobatto quadrature, last point is interval_max
    x(node_count) = interval_max
    w(node_count) = weight
@@ -258,29 +277,33 @@ subroutine compute_lobatto_rule (interval_min,interval_max,node_count,w,x)
 end subroutine compute_lobatto_rule
 
 subroutine compute_wave_terms (channel_energy,a,b,c,z_max)
-   implicit double precision (a-h,o-z)
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
 !
 ! ------------------------------------------------------------------
 ! Construction and storage of the diagonal matrices a,b and c
 ! that enter the log derivative Kohn expression for the S-matrix.
 ! ------------------------------------------------------------------
 !
-   complex(kind=8) a, b, c
+   integer, parameter :: dp = real64
+   real(dp), intent(in) :: channel_energy, z_max
+   complex(dp), intent(out) :: a, b, c
+   real(dp) :: dk, theta, bcc, bcs, cc, cs
 !
-   dk = sqrt (dabs(channel_energy))
+   dk = sqrt (abs(channel_energy))
    if (channel_energy .lt. 0.0d0) then
       theta = dk*z_max
       bcc   = cos(2.0d0*theta)
       bcs   = sin(2.0d0*theta)
       cc    = cos(theta)
       cs    = sin(theta)
-      a  = cmplx(bcc,-bcs,kind=8)
-      b  = (dk**0.5d0)*cmplx(cc,-cs,kind=8)
-      c  = cmplx(0.0d0,dk,kind=8)
+      a  = cmplx(bcc,-bcs,kind=dp)
+      b  = (dk**0.5d0)*cmplx(cc,-cs,kind=dp)
+      c  = cmplx(0.0d0,dk,kind=dp)
    else
       a = (0.0d0,0.0d0)
       b = (0.0d0,0.0d0)
-      c = cmplx(-dk,0.0d0,kind=8)
+      c = cmplx(-dk,0.0d0,kind=dp)
    endif
    return
 end subroutine compute_wave_terms
@@ -289,10 +312,12 @@ subroutine build_preconditioner (n_z_points,channel_count, &
 & fourier_values,n_fourier_components, &
 & specular_fourier_component_index,channel_energy_z, &
 & eigenvalues,preconditioner_factors,kinetic_matrix)
-   implicit double precision (a-h,o-z)
-   include 'multiscat.inc'
-   integer n_z_points, channel_count
-   integer n_fourier_components, specular_fourier_component_index
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
+   integer, parameter :: dp = real64
+   integer, parameter :: mmax = 550
+   integer, intent(in) :: n_z_points, channel_count
+   integer, intent(in) :: n_fourier_components, specular_fourier_component_index
 !
 ! ------------------------------------------------------------------
 ! This subroutine constructs the matrix factors that are required
@@ -301,23 +326,25 @@ subroutine build_preconditioner (n_z_points,channel_count, &
 ! t is the matrix from tshapes
 ! ------------------------------------------------------------------
 !
-   complex(kind=8) fourier_values(n_z_points,n_fourier_components)
-   dimension channel_energy_z(channel_count)
-   dimension eigenvalues(n_z_points)
-   dimension preconditioner_factors(n_z_points,channel_count)
-   double precision kinetic_matrix(n_z_points,n_z_points)
-   dimension g(mmax)
+   complex(dp), intent(in) :: fourier_values(n_z_points,n_fourier_components)
+   real(dp), intent(in) :: channel_energy_z(channel_count)
+   real(dp), intent(out) :: eigenvalues(n_z_points)
+   real(dp), intent(out) :: preconditioner_factors(n_z_points,channel_count)
+   real(dp), intent(inout) :: kinetic_matrix(n_z_points,n_z_points)
+   real(dp) :: g(mmax)
+   integer :: i, j, k, ierr
+   external :: rs
 
 ! if m exceeds maximum size of m program terminates printing out precon 1
    if (n_z_points .gt. mmax) error stop 'precon 1'
 !
    do k = 1,n_z_points
-! dble(x) transfroms input into double precision real
+! real(x,kind=dp) transforms input into dp real
 ! for complex numbers it will return only real part
 ! This overwrites t to be H0 (as named in '90 Kohn paper)
       kinetic_matrix(k,k) = kinetic_matrix(k,k) + &
-      & dble(fourier_values(k, &
-      & specular_fourier_component_index))
+      & real(fourier_values(k, &
+      & specular_fourier_component_index),kind=dp)
    enddo
 
 ! get eigenvalues [e] and eigenvectors [ overwrite them on t] of t,
@@ -353,26 +380,37 @@ subroutine solve_gmres_system (x,xx,y,n_z_points, &
 & n_fourier_components, &
 & a,b,c,d,e,f,p,s,t,convergence_eps, &
 & preconditioner_flag,ifail)
-   implicit double precision (a-h,o-z)
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
 !
 ! -----------------------------------------------------------------
 ! Complex Generalised Minimal Residual Algorithm (GMRES)
 ! This version written by DEM, 6/12/94
 ! -----------------------------------------------------------------
 !
-   integer n_z_points, channel_count, specular_channel_index
-   integer n_fourier_components, preconditioner_flag
-   integer alloc_status
-   complex(kind=8) x(n_z_points*channel_count), y(n_z_points*channel_count)
-   complex(kind=8) fourier_values(n_z_points,n_fourier_components)
-   complex(kind=8) a(channel_count), b(channel_count), c(channel_count)
-   complex(kind=8) s(channel_count)
-   dimension d(channel_count), e(n_z_points)
-   dimension f(n_z_points,channel_count), p(channel_count)
-   dimension t(n_z_points,n_z_points)
-   integer channel_index_x(channel_count), channel_index_y(channel_count)
-   integer fourier_index_x(n_fourier_components)
-   integer fourier_index_y(n_fourier_components)
+   integer, parameter :: dp = real64
+   integer, intent(in) :: n_z_points, channel_count, specular_channel_index
+   integer, intent(in) :: n_fourier_components, preconditioner_flag
+   integer, intent(out) :: ifail
+   integer, parameter :: l = 2000
+   integer, intent(in) :: channel_index_x(channel_count), channel_index_y(channel_count)
+   integer, intent(in) :: fourier_index_x(n_fourier_components)
+   integer, intent(in) :: fourier_index_y(n_fourier_components)
+   complex(dp), intent(out) :: x(n_z_points*channel_count)
+   complex(dp), intent(out) :: xx(n_z_points*channel_count,l+1)
+   complex(dp), intent(inout) :: y(n_z_points*channel_count)
+   complex(dp), intent(in) :: fourier_values(n_z_points,n_fourier_components)
+   complex(dp), intent(in) :: a(channel_count), b(channel_count), c(channel_count)
+   complex(dp), intent(out) :: s(channel_count)
+   real(dp), intent(in) :: d(channel_count), e(n_z_points)
+   real(dp), intent(in) :: f(n_z_points,channel_count)
+   real(dp), intent(out) :: p(channel_count)
+   real(dp), intent(in) :: t(n_z_points,n_z_points)
+   real(dp), intent(in) :: convergence_eps
+
+   integer :: alloc_status
+   integer :: mn, i, j, k, kount, kconv, kk
+   real(dp) :: xnorm, unit, diff, pj
 !
 ! NB:
 ! This subroutine implements a preconditioned version of GMRES(l).
@@ -381,20 +419,18 @@ subroutine solve_gmres_system (x,xx,y,n_z_points, &
 ! by increasing the following parameter:
 !
 ! parameter (l = 100)  increased l to 200, 22/4/1999, APJ
-   parameter (l = 2000)
-   complex(kind=8), allocatable :: h(:,:), g(:), z(:)
-   complex(kind=8), allocatable :: co(:), si(:)
-   complex(kind=8) temp
+   complex(dp), allocatable :: h(:,:), g(:), z(:)
+   complex(dp), allocatable :: co(:), si(:)
+   complex(dp) temp
 !
 ! store x matrices in xx rather than write to disk.
 !
-   complex(kind=8) xx(n_z_points*channel_count,l+1)
-
    allocate(h(l+1,l+1), g(l+1), z(l+1), co(l+1), si(l+1), stat=alloc_status)
    if (alloc_status /= 0) error stop 'ERROR: allocation failure (h, g, z, co, si).'
 !
 ! Setup for GMRES(l):
 !
+   ifail = 0
    mn = n_z_points*channel_count
    do i = 1,mn
       x(i) = (0.0d0,0.0d0)
@@ -440,7 +476,7 @@ subroutine solve_gmres_system (x,xx,y,n_z_points, &
    endif
    xnorm = 0.0d0
    do i = 1,mn
-      xnorm = xnorm + dble(conjg(x(i))*x(i))
+      xnorm = xnorm + real(conjg(x(i))*x(i),kind=dp)
    enddo
    xnorm = sqrt(xnorm)
    g(1) = xnorm
@@ -511,7 +547,7 @@ subroutine solve_gmres_system (x,xx,y,n_z_points, &
       & a(specular_channel_index)+s(specular_channel_index)
       xnorm = 0.0d0
       do i = 1,mn
-         xnorm = xnorm + dble(conjg(x(i))*x(i))
+         xnorm = xnorm + real(conjg(x(i))*x(i),kind=dp)
       enddo
       xnorm = sqrt(xnorm)
       h(k+1,k) = xnorm
@@ -538,7 +574,7 @@ subroutine solve_gmres_system (x,xx,y,n_z_points, &
       unit = 0.0d0
       diff = 0.0d0
       do j = 1,channel_count
-         pj = dble(conjg(s(j))*s(j))
+         pj = real(conjg(s(j))*s(j),kind=dp)
          unit = unit+pj
          diff = max(diff,abs(pj-p(j)))
          p(j) = pj
@@ -550,9 +586,8 @@ subroutine solve_gmres_system (x,xx,y,n_z_points, &
          kconv = 0
       endif
       kk = k
-      if (kconv.eq.3 .or. xnorm.eq.0.0d0) go to 2
+      if (kconv.eq.3 .or. xnorm.eq.0.0d0) exit
    enddo
-2  continue
 !
 ! back substitution for x:
 !
@@ -584,7 +619,8 @@ subroutine apply_upper_block (state_vector,n_z_points, &
 & channel_index_x,channel_index_y,channel_count, &
 & fourier_values,fourier_index_x,fourier_index_y, &
 & n_fourier_components)
-   implicit double precision (a-h,o-z)
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
 !
 ! ----------------------------------------------------------
 ! This subroutine performs the block upper triangular
@@ -592,12 +628,14 @@ subroutine apply_upper_block (state_vector,n_z_points, &
 ! The result y is overwritten on x on return.
 ! ----------------------------------------------------------
 !
-   integer n_z_points, channel_count, n_fourier_components
-   complex(kind=8) state_vector(n_z_points,channel_count)
-   complex(kind=8) fourier_values(n_z_points,n_fourier_components)
-   integer channel_index_x(channel_count), channel_index_y(channel_count)
-   integer fourier_index_x(n_fourier_components)
-   integer fourier_index_y(n_fourier_components)
+   integer, parameter :: dp = real64
+   integer, intent(in) :: n_z_points, channel_count, n_fourier_components
+   complex(dp), intent(inout) :: state_vector(n_z_points,channel_count)
+   complex(dp), intent(in) :: fourier_values(n_z_points,n_fourier_components)
+   integer, intent(in) :: channel_index_x(channel_count), channel_index_y(channel_count)
+   integer, intent(in) :: fourier_index_x(n_fourier_components)
+   integer, intent(in) :: fourier_index_y(n_fourier_components)
+   integer :: i, j, k, l
 !
    do j = 1,channel_count
       do k = 1,n_z_points
@@ -605,15 +643,13 @@ subroutine apply_upper_block (state_vector,n_z_points, &
       enddo
       do i = j+1,channel_count
          do l = 1,n_fourier_components
-            if (channel_index_x(i) + fourier_index_x(l) &
-            & .ne. channel_index_x(j)) go to 1
-            if (channel_index_y(i) + fourier_index_y(l) &
-            & .ne. channel_index_y(j)) go to 1
-            do k = 1,n_z_points
-               state_vector(k,j) = state_vector(k,j) + &
-               & fourier_values(k,l)*state_vector(k,i)
-            enddo
-1           continue
+            if (channel_index_x(i) + fourier_index_x(l) .eq. channel_index_x(j) .and. &
+            & channel_index_y(i) + fourier_index_y(l) .eq. channel_index_y(j)) then
+               do k = 1,n_z_points
+                  state_vector(k,j) = state_vector(k,j) + &
+                  & fourier_values(k,l)*state_vector(k,i)
+               enddo
+            end if
          enddo
       enddo
    enddo
@@ -625,8 +661,10 @@ subroutine solve_lower_block (state_vector,n_z_points, &
 & fourier_values,fourier_index_x,fourier_index_y, &
 & n_fourier_components,wave_c,channel_energy_z, &
 & eigenvalues,preconditioner_factors,kinetic_matrix)
-   implicit double precision (a-h,o-z)
-   include 'multiscat.inc'
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
+   integer, parameter :: dp = real64
+   integer, parameter :: mmax = 550
 !
 ! ----------------------------------------------------------
 ! This subroutine solves the block lower triangular
@@ -634,34 +672,33 @@ subroutine solve_lower_block (state_vector,n_z_points, &
 ! The result y is overwritten on x on return.
 ! ----------------------------------------------------------
 !
-   integer n_z_points, channel_count, n_fourier_components
-   complex(kind=8) state_vector(n_z_points,channel_count)
-   complex(kind=8) fourier_values(n_z_points,n_fourier_components)
-   complex(kind=8) wave_c(channel_count)
-   integer channel_index_x(channel_count), channel_index_y(channel_count)
-   integer fourier_index_x(n_fourier_components)
-   integer fourier_index_y(n_fourier_components)
-   dimension channel_energy_z(channel_count), eigenvalues(n_z_points)
-   dimension preconditioner_factors(n_z_points,channel_count)
-   double precision kinetic_matrix(n_z_points,n_z_points)
+   integer, intent(in) :: n_z_points, channel_count, n_fourier_components
+   complex(dp), intent(inout) :: state_vector(n_z_points,channel_count)
+   complex(dp), intent(in) :: fourier_values(n_z_points,n_fourier_components)
+   complex(dp), intent(in) :: wave_c(channel_count)
+   integer, intent(in) :: channel_index_x(channel_count), channel_index_y(channel_count)
+   integer, intent(in) :: fourier_index_x(n_fourier_components)
+   integer, intent(in) :: fourier_index_y(n_fourier_components)
+   real(dp), intent(in) :: channel_energy_z(channel_count), eigenvalues(n_z_points)
+   real(dp), intent(in) :: preconditioner_factors(n_z_points,channel_count)
+   real(dp), intent(in) :: kinetic_matrix(n_z_points,n_z_points)
+   integer :: i, j, k, l
 !
 
 !parameter (mmax = 200)
-   complex(kind=8) y(mmax), fac
+   complex(dp) y(mmax), fac
    if (n_z_points .gt. mmax) error stop 'lower 1'
 !
    do j = 1,channel_count
       do i = 1,j-1
          do l = 1,n_fourier_components
-            if (channel_index_x(i) + fourier_index_x(l) &
-            & .ne. channel_index_x(j)) go to 1
-            if (channel_index_y(i) + fourier_index_y(l) &
-            & .ne. channel_index_y(j)) go to 1
-            do k = 1,n_z_points
-               state_vector(k,j) = state_vector(k,j) &
-               & - fourier_values(k,l)*state_vector(k,i)
-            enddo
-1           continue
+            if (channel_index_x(i) + fourier_index_x(l) .eq. channel_index_x(j) .and. &
+            & channel_index_y(i) + fourier_index_y(l) .eq. channel_index_y(j)) then
+               do k = 1,n_z_points
+                  state_vector(k,j) = state_vector(k,j) &
+                  & - fourier_values(k,l)*state_vector(k,i)
+               enddo
+            end if
          enddo
       enddo
       do k = 1,n_z_points
@@ -690,9 +727,13 @@ subroutine solve_lower_block (state_vector,n_z_points, &
 end subroutine solve_lower_block
 
 subroutine compute_complex_givens_rotation (input_a,input_b,c,s)
-   implicit complex*16 (a-h,o-z)
-   double precision scale,r
-   complex(kind=8) input_a, input_b
+   use, intrinsic :: iso_fortran_env, only: real64
+   implicit none
+   integer, parameter :: dp = real64
+   complex(dp), intent(inout) :: input_a, input_b
+   complex(dp), intent(out) :: c, s
+   real(dp) :: scale, r
+   complex(dp) :: rho, z
 !
 ! -----------------------------------------------------------------
 ! This subroutine constructs and performs a complex Givens rotation
@@ -706,10 +747,10 @@ subroutine compute_complex_givens_rotation (input_a,input_b,c,s)
       s = 0.0d0
       r = 0.0d0
    else
-      r = dble((input_a/scale)*conjg(input_a/scale) + &
-      & (input_b/scale)*conjg(input_b/scale))
+      r = real((input_a/scale)*conjg(input_a/scale) + &
+      & (input_b/scale)*conjg(input_b/scale),kind=dp)
       r = scale*sqrt(r)
-      if (dble(rho) .lt. 0.0d0) r = -r
+      if (real(rho,kind=dp) .lt. 0.0d0) r = -r
       c = conjg(input_a/r)
       s = input_b/r
    end if

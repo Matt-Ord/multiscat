@@ -66,7 +66,7 @@ subroutine run_multiscat_fortran( &
    integer, intent(out) :: ierr
 
    real(dp), parameter :: hbarsq = 4.18020_dp
-   real(dp) :: hemass, rmlmda
+   real(dp) :: rmlmda
    integer :: nfc
    integer :: i, j, idx, alloc_status
 
@@ -74,8 +74,6 @@ subroutine run_multiscat_fortran( &
    type(ScatteringData) :: scatt_conditions_data
    type(PotentialData) :: potential_data
    type(OutputData) :: output_data
-
-   common /const/ hemass, rmlmda
 
    ierr = 0
    channel_count = 0
@@ -162,8 +160,7 @@ subroutine run_multiscat_fortran( &
       end do
    end do
 
-   hemass = scatt_conditions_data%helium_mass
-   rmlmda = 2.0_dp * hemass / hbarsq
+   rmlmda = 2.0_dp * scatt_conditions_data%helium_mass / hbarsq
 
    potential_data%fixed_fourier_values = potential_values * rmlmda
    output_data = calculate_output_data(optimization_data, scatt_conditions_data, potential_data)
