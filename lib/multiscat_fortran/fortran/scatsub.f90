@@ -1,6 +1,6 @@
 subroutine get_momentum_basis( &
-   channel_count, specular_channel_index, channel_index_x, channel_index_y, &
-   channel_energy_z, max_closed_channel_energy, max_channel_index &
+& channel_count, specular_channel_index, channel_index_x, channel_index_y, &
+& channel_energy_z, max_closed_channel_energy, max_channel_index &
    )
    implicit double precision (a-h,o-z)
 !
