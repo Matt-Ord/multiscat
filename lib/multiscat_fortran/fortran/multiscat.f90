@@ -79,17 +79,28 @@ contains
     double precision :: zmin, zmax
     double precision :: open_sum
 
-    complex*16 :: x(mmax,nmax), y(mmax,nmax), vfc(mmax,nfcx)
-    complex*16 :: xx(nmax*mmax,lmax)
-    complex*16 :: a(nmax), b(nmax), c(nmax), s(nmax)
-    complex*16 :: vfcfixed(NZFIXED_MAX,NVFCFIXED_MAX)
+    ! --- CONVERTED TO ALLOCATABLE DYNAMIC ARRAYS ---
+    complex*16, allocatable :: x(:,:), y(:,:), vfc(:,:)
+    complex*16, allocatable :: xx(:,:)
+    complex*16, allocatable :: a(:), b(:), c(:), s(:)
+    complex*16, allocatable :: vfcfixed(:,:)
 
-    integer :: ix(nmax), iy(nmax), ivx(nfcx), ivy(nfcx)
-    double precision :: p(nmax), w(mmax), z(mmax)
-    double precision :: d(nmax), e(mmax), f(mmax,nmax), t(mmax,mmax)
+    integer, allocatable :: ix(:), iy(:), ivx(:), ivy(:)
+    double precision, allocatable :: p(:), w(:), z(:)
+    double precision, allocatable :: d(:), e(:), f(:,:), t(:,:)
 
     common /const/ hemass, rmlmda
     common /cells/ ax,ay,bx,by,ei,theta,phi,a0
+
+    ! --- ALLOCATE MEMORY ON THE HEAP ---
+    allocate(x(mmax,nmax), y(mmax,nmax), vfc(mmax,nfcx))
+    allocate(xx(nmax*mmax, lmax))
+    allocate(a(nmax), b(nmax), c(nmax), s(nmax))
+    allocate(vfcfixed(NZFIXED_MAX, NVFCFIXED_MAX))
+
+    allocate(ix(nmax), iy(nmax), ivx(nfcx), ivy(nfcx))
+    allocate(p(nmax), w(mmax), z(mmax))
+    allocate(d(nmax), e(mmax), f(mmax,nmax), t(mmax,mmax))
 
     ipc = optimization_data%gmres_preconditioner_flag
     nsf = optimization_data%convergence_significant_figures
@@ -165,6 +176,11 @@ contains
       if (d(j).lt.0.0d0) open_sum = open_sum + p(j)
     end do
     output_data%condition%open_channel_intensity_sum = open_sum
+
+    ! --- FREE MEMORY BEFORE RETURNING ---
+    deallocate(x, y, vfc, xx, a, b, c, s, vfcfixed)
+    deallocate(ix, iy, ivx, ivy, p, w, z, d, e, f, t)
+
   end function calculate_output_data
 
 end module multiscat_core

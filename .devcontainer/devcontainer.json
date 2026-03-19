@@ -69,5 +69,5 @@
 			]
 		}
 	},
-	"onCreateCommand": "npm install -g cspell && sudo apt-get update && sudo  apt-get install -y libgfortran5 && uv python install && uv sync --all-extras"
+	"onCreateCommand": "npm install -g cspell && sudo apt-get update && sudo  apt-get install -y gfortran slibgfortran5 && uv python install && uv sync --all-extras"
 }
