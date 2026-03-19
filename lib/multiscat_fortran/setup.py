@@ -33,19 +33,20 @@ class F2PyBuildExt(build_ext):  # noqa: D101
         module_name = "_multiscat_f2py"
         expected_output = build_temp / f"{module_name}{ext_suffix}"
 
-        fflags = f"-I{fortran_dir} -ffixed-line-length-none"
+        f77flags = f"-I{fortran_dir} -ffixed-line-length-none"
+        f90flags = f"-I{fortran_dir} -ffree-line-length-none" # cspell: disable-line
 
         command = [
             sys.executable,
             "-m",
             "numpy.f2py",
             "-c",
-            f"--f77flags={fflags}",
-            f"--f90flags={fflags}",
+            f"--f77flags={f77flags}",
+            f"--f90flags={f90flags}",
             "fortran/multiscat_python_bindings.pyf",
             "fortran/multiscat_python_bindings.f90",
             "fortran/multiscat.f90",
-            "fortran/scatsub.f",
+            "fortran/scatsub.f90",
             "fortran/diagsub.f",
             "-m",
             module_name,
