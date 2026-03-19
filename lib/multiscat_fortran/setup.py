@@ -33,7 +33,7 @@ class F2PyBuildExt(build_ext):  # noqa: D101
         module_name = "_multiscat_f2py"
         expected_output = build_temp / f"{module_name}{ext_suffix}"
 
-        fflags = f"-I{fortran_dir} -mcmodel=large"
+        fflags = f"-I{fortran_dir}"
 
         command = [
             sys.executable,
@@ -52,10 +52,10 @@ class F2PyBuildExt(build_ext):  # noqa: D101
         ]
 
         env = os.environ.copy()
-        env["CFLAGS"] = (env.get("CFLAGS", "") + " -mcmodel=large").strip()
-        env["FFLAGS"] = (env.get("FFLAGS", "") + " -mcmodel=large").strip()
-        env["FCFLAGS"] = (env.get("FCFLAGS", "") + " -mcmodel=large").strip()
-        env["LDFLAGS"] = (env.get("LDFLAGS", "") + " -mcmodel=large").strip()
+        env["CFLAGS"] = (env.get("CFLAGS", "") ).strip()
+        env["FFLAGS"] = (env.get("FFLAGS", "") ).strip()
+        env["FCFLAGS"] = (env.get("FCFLAGS", "") ).strip()
+        env["LDFLAGS"] = (env.get("LDFLAGS", "") ).strip()
 
         subprocess.run(command, cwd=project_dir, check=True, env=env)  # noqa: S603
 
