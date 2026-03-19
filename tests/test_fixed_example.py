@@ -1,0 +1,236 @@
+from __future__ import annotations
+
+import math
+import re
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+from scipy.constants import (  # type: ignore[import-untyped]
+    angstrom,
+    electron_volt,
+    physical_constants,
+)
+from slate_core import EvenlySpacedLengthMetadata, array
+from slate_quantum import operator
+
+from multiscat.basis import (
+    close_coupling_basis,
+    scattering_metadata_from_stacked_delta_x,
+)
+from multiscat.config import OptimizationConfig, ScatteringCondition
+from multiscat.multiscat import run_multiscat
+
+if TYPE_CHECKING:
+    from slate_core.metadata import AxisDirections, LobattoSpacedLengthMetadata
+
+    from multiscat.interpolate import ScatteringOperator
+
+ROOT = Path(__file__).resolve().parents[1]
+TESTS_DIR = Path(__file__).resolve().parent
+HELIUM_MASS = physical_constants["alpha particle mass"][0]
+UNIT_CELL = 2.84 * angstrom
+Z_HEIGHT = 8 * angstrom
+
+MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(
+    depth=7.63 * electron_volt * 10**-3,
+    height=(1.0 / 1.1) * angstrom,
+    offset=3.0 * angstrom,
+    beta=0.10,
+)
+
+
+def _parse_intensities(output_file: Path) -> dict[tuple[int, int], float]:
+    pattern = re.compile(r"^#\s+(-?\d+)\s+(-?\d+)\s+([0-9.E+-]+)\s*$")
+    intensities: dict[tuple[int, int], float] = {}
+    for line in output_file.read_text().splitlines():
+        match = pattern.match(line)
+        if not match:
+            continue
+        h = int(match.group(1))
+        k = int(match.group(2))
+        intensities[(h, k)] = float(match.group(3))
+    return intensities
+
+
+def _load_potential_file_as_array(path: Path) -> np.ndarray:
+    lines = path.read_text().splitlines()
+    data_start = next(i for i, line in enumerate(lines) if line.strip().startswith("("))
+    lines = lines[data_start:]
+    return _load_potential_lines_as_array(lines)
+
+
+def _load_potential_lines_as_array(
+    lines: list[str],
+) -> np.ndarray[Any, np.dtype[np.complex128]]:
+    values = list[complex]()
+    for line in lines:
+        real_str, imag_str = line.strip()[1:-1].split(",")
+        values.append(complex(float(real_str), float(imag_str)))
+    return np.asarray(values, dtype=np.complex128)
+
+
+def _raw_potential_in_input_file_convention(
+    potential: ScatteringOperator[
+        EvenlySpacedLengthMetadata,
+        LobattoSpacedLengthMetadata,
+        AxisDirections,
+    ],
+) -> np.ndarray[Any, np.dtype[np.complex128]]:
+
+    potential_diagonal = array.extract_diagonal(potential)
+    nx, ny, nz = potential_diagonal.basis.metadata().shape
+    basis_weights = potential_diagonal.basis.metadata().children[2].basis_weights
+    basis = close_coupling_basis(potential_diagonal.basis.metadata())
+
+    data = potential_diagonal.with_basis(basis).raw_data
+    data = data.reshape((nx, ny, nz)) * (basis_weights[np.newaxis, np.newaxis, :])
+
+    # Multiscat uses a slightly different fourier convention
+    return data.ravel() / (electron_volt * 10**-3 * np.sqrt(nx * ny))
+
+
+def _simple_example_condition() -> tuple[
+    ScatteringCondition[
+        EvenlySpacedLengthMetadata,
+        LobattoSpacedLengthMetadata,
+        AxisDirections,
+    ],
+    OptimizationConfig,
+]:
+
+    metadata = scattering_metadata_from_stacked_delta_x(
+        (
+            np.array([UNIT_CELL, 0, 0]),
+            np.array([0, UNIT_CELL, 0]),
+            np.array([0, 0, Z_HEIGHT]),
+        ),
+        (32, 32, 550),
+    )
+    # This is taken from https://doi.org/10.1039/FT9908601641
+    # and is a reproduction of the Wolken 4He-LiF problem in table 1,
+    # originally simulated in https://doi.org/10.1063/1.1679617.
+    condition = ScatteringCondition.from_angles(
+        mass=HELIUM_MASS,
+        energy=20 * electron_volt * 10**-3,
+        theta=np.deg2rad(30),
+        phi=np.deg2rad(0),
+        potential=operator.build.corrugated_morse_potential(
+            metadata,
+            MORSE_PARAMETERS,
+        ),
+    )
+    config = OptimizationConfig(precision=1e-5, max_iterations=1000)
+    return condition, config
+
+
+def test_simple_system() -> None:
+
+    condition, config = _simple_example_condition()
+    intensities = run_multiscat(condition, config)
+
+    if not intensities:
+        msg = "Expected at least one diffraction intensity"
+        raise AssertionError(msg)
+
+    if not math.isclose(sum(intensities.values()), 1.0, abs_tol=1e-6):
+        msg = f"Intensities sum to {sum(intensities.values())}, expected 1.0"
+        raise AssertionError(msg)
+
+    expected_from_file = _parse_intensities(
+        TESTS_DIR / "data" / Path("expected_intensities.txt"),
+    )
+    for spot, expected_value in expected_from_file.items():
+        if spot not in intensities:
+            msg = f"Missing diffraction spot {spot}"
+            raise AssertionError(msg)
+        if not math.isclose(intensities[spot], expected_value, abs_tol=1e-5):
+            msg = (
+                f"Intensity for spot {spot} is {intensities[spot]},"
+                f" expected {expected_value}"
+            )
+            raise AssertionError(msg)
+
+
+def _rotated_example_condition() -> tuple[
+    ScatteringCondition[
+        EvenlySpacedLengthMetadata,
+        LobattoSpacedLengthMetadata,
+        AxisDirections,
+    ],
+    OptimizationConfig,
+]:
+
+    rotation = np.deg2rad(20.0)
+    cos_t = np.cos(rotation)
+    sin_t = np.sin(rotation)
+    rotation_matrix = np.array(
+        [
+            [cos_t, -sin_t, 0.0],
+            [sin_t, cos_t, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+    )
+    x_vector = rotation_matrix @ np.array([UNIT_CELL, 0.0, 0.0])
+    y_vector = rotation_matrix @ np.array([0.0, UNIT_CELL, 0.0])
+
+    metadata = scattering_metadata_from_stacked_delta_x(
+        (
+            x_vector,
+            y_vector,
+            np.array([0.0, 0.0, Z_HEIGHT]),
+        ),
+        (32, 32, 550),
+    )
+
+    condition = ScatteringCondition.from_angles(
+        mass=HELIUM_MASS,
+        energy=20 * electron_volt * 10**-3,
+        theta=np.deg2rad(30),
+        phi=np.deg2rad(0),
+        potential=operator.build.corrugated_morse_potential(
+            metadata,
+            MORSE_PARAMETERS,
+        ),
+    )
+    config = OptimizationConfig(precision=1e-5, max_iterations=1000)
+    return condition, config
+
+
+def test_rotated_system() -> None:
+
+    condition, config = _rotated_example_condition()
+    intensities = run_multiscat(condition, config)
+
+    if not intensities:
+        msg = "Expected at least one diffraction intensity"
+        raise AssertionError(msg)
+
+    if not math.isclose(sum(intensities.values()), 1.0, abs_tol=1e-6):
+        msg = f"Intensities sum to {sum(intensities.values())}, expected 1.0"
+        raise AssertionError(msg)
+
+    expected_from_file = _parse_intensities(
+        TESTS_DIR / "data" / Path("expected_intensities.txt"),
+    )
+    for spot, expected_value in expected_from_file.items():
+        if spot not in intensities:
+            msg = f"Missing diffraction spot {spot}"
+            raise AssertionError(msg)
+        if not math.isclose(intensities[spot], expected_value, abs_tol=1e-5):
+            msg = (
+                f"Intensity for spot {spot} is {intensities[spot]},"
+                f" expected {expected_value}"
+            )
+            raise AssertionError(msg)
+
+
+def test_raw_potential_in_input_file_convention() -> None:
+    condition, _ = _simple_example_condition()
+    from_condition = _raw_potential_in_input_file_convention(condition.potential)
+
+    reference_potential = TESTS_DIR / "data" / "pot10001.in"
+    expected = _load_potential_file_as_array(reference_potential)
+
+    np.testing.assert_equal(expected.shape, from_condition.shape)
+    np.testing.assert_allclose((from_condition), (expected), rtol=1e-5, atol=1e-10)

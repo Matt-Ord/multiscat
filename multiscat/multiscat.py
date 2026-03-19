@@ -4,7 +4,13 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
-from slate_core import SimpleMetadata, TupleBasis, TupleMetadata
+from multiscat_fortran import run_multiscat_fortran
+from scipy.constants import (  # type: ignore[import-untyped]
+    angstrom,
+    atomic_mass,
+    electron_volt,
+)
+from slate_core import SimpleMetadata, TupleBasis, TupleMetadata, array
 from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
     PERIODIC_FEATURE,
@@ -29,6 +35,7 @@ from multiscat.polynomial import get_barycentric_derivatives
 
 if TYPE_CHECKING:
     from multiscat.interpolate import ScatteringOperator
+
 
 type KineticDifferenceOperatorBasis[
     M0: SimpleMetadata,
@@ -275,7 +282,13 @@ def get_scattered_state[
     raise NotImplementedError(msg)
 
 
-def _condition_parameters(condition: ScatteringCondition) -> tuple[float, float, float, float]:
+def _condition_parameters(
+    condition: ScatteringCondition[
+        EvenlySpacedLengthMetadata,
+        LobattoSpacedLengthMetadata,
+        AxisDirections,
+    ],
+) -> tuple[float, float, float, float]:
     scattering_vector = np.asarray(condition.incident_k)
     scattering_magnitude = float(np.linalg.norm(scattering_vector))
     if scattering_magnitude <= 0:
@@ -283,12 +296,10 @@ def _condition_parameters(condition: ScatteringCondition) -> tuple[float, float,
         raise ValueError(msg)
 
     mass_amu = float(condition.mass / atomic_mass)
-    energy_meV = float(condition.incident_energy / (electron_volt * 10**3))
+    energy_mev = float(condition.incident_energy / (electron_volt * 10**3))
     theta_degrees = float(np.degrees(condition.theta))
     phi_degrees = float(np.degrees(condition.phi))
-    return mass_amu, energy_meV, theta_degrees, phi_degrees
-
-
+    return mass_amu, energy_mev, theta_degrees, phi_degrees
 
 
 def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int, float, int]:
@@ -304,7 +315,7 @@ def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int, floa
         else 120.0
     )
     max_channel_index = int(
-        config.max_channel_index if config.max_channel_index is not None else 120
+        config.max_channel_index if config.max_channel_index is not None else 120,
     )
     return (
         gmres_preconditioner_flag,
@@ -315,7 +326,11 @@ def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int, floa
 
 
 def _raw_potential_in_input_file_convention(
-    potential: ScatteringOperator,
+    potential: ScatteringOperator[
+        EvenlySpacedLengthMetadata,
+        LobattoSpacedLengthMetadata,
+        AxisDirections,
+    ],
 ) -> np.ndarray[Any, np.dtype[np.complex128]]:
     potential_diagonal = array.extract_diagonal(potential)
     nx, ny, nz = potential_diagonal.basis.metadata().shape
@@ -330,8 +345,23 @@ def _raw_potential_in_input_file_convention(
 
 
 def _potential_parameters(
-    potential: ScatteringOperator,
-) -> tuple[int, int, int, float, float, float, float, float, float, np.ndarray[Any, np.dtype[np.complex128]]]:
+    potential: ScatteringOperator[
+        EvenlySpacedLengthMetadata,
+        LobattoSpacedLengthMetadata,
+        AxisDirections,
+    ],
+) -> tuple[
+    int,
+    int,
+    int,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    np.ndarray[Any, np.dtype[np.complex128]],
+]:
     potential_lobatto = _raw_potential_in_input_file_convention(potential)
     metadata = potential.basis.metadata().children[0]
     nx, ny, nz = metadata.shape
@@ -365,10 +395,15 @@ def _potential_parameters(
 
 
 def run_multiscat(
-    condition: ScatteringCondition, config: OptimizationConfig
+    condition: ScatteringCondition[
+        EvenlySpacedLengthMetadata,
+        LobattoSpacedLengthMetadata,
+        AxisDirections,
+    ],
+    config: OptimizationConfig,
 ) -> dict[tuple[int, int], float]:
     """Run Multiscat through the f2py native binding and return intensities."""
-    mass_amu, energy_meV, theta_degrees, phi_degrees = _condition_parameters(condition)
+    mass_amu, energy_mev, theta_degrees, phi_degrees = _condition_parameters(condition)
     (
         gmres_preconditioner_flag,
         convergence_significant_figures,
@@ -401,7 +436,7 @@ def run_multiscat(
         ierr,
     ) = run_multiscat_fortran(
         mass_amu,
-        energy_meV,
+        energy_mev,
         theta_degrees,
         phi_degrees,
         gmres_preconditioner_flag,
@@ -429,6 +464,6 @@ def run_multiscat(
     for idx in range(int(channel_count)):
         if channel_d[idx] < 0.0:
             intensities[(int(channel_ix[idx]), int(channel_iy[idx]))] = float(
-                channel_intensity[idx]
+                channel_intensity[idx],
             )
     return intensities

@@ -26,9 +26,9 @@ class OptimizationConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class ScatteringCondition[
-    M0: EvenlySpacedLengthMetadata,
-    M1: LobattoSpacedMetadata,
-    E: AxisDirections,
+    M0: EvenlySpacedLengthMetadata = EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedMetadata = LobattoSpacedMetadata,
+    E: AxisDirections = AxisDirections,
 ]:
     """Represents a particular scattering condition."""
 
