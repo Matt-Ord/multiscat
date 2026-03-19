@@ -35,7 +35,6 @@
 					"multiscat"
 				],
 				"python.analysis.autoImportCompletions": true,
-				"cSpell.allowCompoundWords": true,
 				"python.analysis.packageIndexDepths": [
 					{
 						"name": "slate_core",
@@ -54,19 +53,6 @@
 						"depth": 2
 					}
 				],
-				"cSpell.flagWords": [
-					"hte",
-					"teh",
-					"hamiltonain"
-				],
-				"cSpell.words": [
-					"dtype",
-					"ndarray",
-					"numpy",
-					"pylance",
-					"lobatto",
-					"gmres"
-				]
 			},
 			"extensions": [
 				"donjayamanne.python-extension-pack",
