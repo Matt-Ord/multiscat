@@ -3,9 +3,9 @@ from numpy.typing import NDArray
 
 def run_multiscat_fortran(
     helium_mass: float,
-    incident_energy_mev: float,
-    theta_degrees: float,
-    phi_degrees: float,
+    incident_kx: float,
+    incident_ky: float,
+    incident_kz: float,
     gmres_preconditioner_flag: int,
     convergence_significant_figures: int,
     nkx: int,
@@ -31,5 +31,16 @@ def run_multiscat_fortran(
     int,
     int,
 ]: ...
+def get_perpendicular_kinetic_difference(
+    incident_kx: float,
+    incident_ky: float,
+    incident_kz: float,
+    nx: int,
+    ny: int,
+    unit_cell_ax: float,
+    unit_cell_ay: float,
+    unit_cell_bx: float,
+    unit_cell_by: float,
+) -> tuple[NDArray[np.float64], int]: ...
 
-__all__ = ["run_multiscat_fortran"]
+__all__ = ["run_multiscat_fortran", "get_perpendicular_kinetic_difference"]
