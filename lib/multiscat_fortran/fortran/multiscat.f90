@@ -95,7 +95,7 @@ contains
       integer :: m, i, j, ifail, alloc_status
 
       real(dp) :: eps, max_closed_channel_energy
-      real(dp) :: ax, ay, bx, by, ei, theta, phi, a0, gax, gay, gbx, gby
+      real(dp) :: ax, ay, bx, by, ei, theta, phi
       real(dp) :: hemass, rmlmda
       real(dp) :: z_min, z_max
       real(dp) :: open_sum
@@ -108,11 +108,6 @@ contains
 
       real(dp), allocatable :: p(:), w(:), z(:)
       real(dp), allocatable :: e(:), f(:,:), t(:,:)
-
-      common /const/ hemass, rmlmda
-      common /cells/ ax,ay,bx,by,ei,theta,phi,a0,gax,gay,gbx,gby
-
-      a0 = 0.0_dp
 
       allocate(x(mmax,nmax), y(mmax,nmax), stat=alloc_status)
       if (alloc_status /= 0) error stop 'ERROR: allocation failure (x, y).'
@@ -145,6 +140,8 @@ contains
       ei = scatt_conditions_data%incident_energy_mev
       theta = scatt_conditions_data%theta_degrees
       phi = scatt_conditions_data%phi_degrees
+      hemass = scatt_conditions_data%helium_mass
+      rmlmda = 2.0_dp * hemass / 4.18020_dp
 
       m = n_z_points
       if (m > mmax) error stop 'ERROR: m too big!'
@@ -155,7 +152,7 @@ contains
          basis_data%channel_count, basis_data%specular_channel_index, &
          basis_data%channel_index_x, basis_data%channel_index_y, &
          basis_data%channel_energy_z, max_closed_channel_energy, &
-         max_channel_index &
+         max_channel_index, ax, ay, bx, by, ei, theta, phi, rmlmda &
          )
       if (basis_data%channel_count > nmax) error stop 'ERROR: n too big!'
 
