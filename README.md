@@ -117,3 +117,17 @@ Y_{\mathbf{G}}(z) = \Psi'_{\mathbf{G}}(z)\Psi^{-1}_{\mathbf{G}}(z)
 $$
 
 Solving the closed coupled equations
+
+## Development Workflow
+
+For local development and CI-like checks, use this dependency/test workflow:
+
+1. Always use `uv` to install dependencies.
+2. Before running tests, always force a reinstall to ensure a clean dependency state.
+
+Example commands:
+
+```bash
+uv sync --all-extras --force-reinstall
+pytest
+```
