@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from multiscat_fortran import get_perpendicular_kinetic_difference
 from scipy.constants import (  # type: ignore[import-untyped]
     angstrom,
     electron_volt,
@@ -17,9 +18,13 @@ from slate_quantum import operator
 from multiscat.basis import (
     close_coupling_basis,
     scattering_metadata_from_stacked_delta_x,
+    split_scattering_metadata,
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
-from multiscat.multiscat import run_multiscat
+from multiscat.multiscat import (
+    _get_perpendicular_kinetic_difference,  # pyright: ignore[reportPrivateUsage]
+    run_multiscat,
+)
 
 if TYPE_CHECKING:
     from slate_core.metadata import AxisDirections, LobattoSpacedLengthMetadata
@@ -228,3 +233,43 @@ def test_raw_potential_in_input_file_convention() -> None:
 
     np.testing.assert_equal(expected.shape, from_condition.shape)
     np.testing.assert_allclose((from_condition), (expected), rtol=1e-5, atol=1e-10)
+
+
+def test_perpendicular_kinetic_difference_matches_fortran() -> None:
+    condition, _ = _simple_example_condition()
+    metadata = condition.metadata
+    nx, ny, _ = metadata.shape
+
+    expected = _get_perpendicular_kinetic_difference(
+        condition.incident_k,
+        metadata,
+    ).reshape((nx, ny))
+
+    metadata_x01, _ = split_scattering_metadata(metadata)
+    directions = metadata.extra.vectors
+    x_vector = np.asarray(directions[0]) * metadata_x01.children[0].domain.delta
+    y_vector = np.asarray(directions[1]) * metadata_x01.children[1].domain.delta
+
+    incident_kx, incident_ky, incident_kz = condition.incident_k
+
+    actual_raw, ierr_raw = get_perpendicular_kinetic_difference(
+        incident_kx=float(incident_kx),
+        incident_ky=float(incident_ky),
+        incident_kz=float(incident_kz),
+        nx=int(nx),
+        ny=int(ny),
+        unit_cell_ax=float(x_vector[0]),
+        unit_cell_ay=float(x_vector[1]),
+        unit_cell_bx=float(y_vector[0]),
+        unit_cell_by=float(y_vector[1]),
+    )
+    actual = np.asarray(actual_raw, dtype=np.float64)
+    ierr = int(ierr_raw)
+
+    if ierr != 0:
+        msg = (
+            "Fortran get_perpendicular_kinetic_difference "
+            f"failed with error code {ierr}"
+        )
+        raise RuntimeError(msg)
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)

@@ -1,8 +1,8 @@
 subroutine run_multiscat_fortran( &
    helium_mass, &
-   incident_energy_mev, &
-   theta_degrees, &
-   phi_degrees, &
+   incident_kx, &
+   incident_ky, &
+   incident_kz, &
    gmres_preconditioner_flag, &
    convergence_significant_figures, &
    nkx, &
@@ -27,16 +27,16 @@ subroutine run_multiscat_fortran( &
    ierr &
    )
    use, intrinsic :: iso_fortran_env, only: real64
-   use multiscat_core, only: OptimizationData, ScatteringData, &
+   use multiscat_core, only: OptimizationData, IncidentWaveData, &
       PotentialData, OutputData, calculate_output_data
    implicit none
 
    integer, parameter :: dp = real64
 
    real(dp), intent(in) :: helium_mass
-   real(dp), intent(in) :: incident_energy_mev
-   real(dp), intent(in) :: theta_degrees
-   real(dp), intent(in) :: phi_degrees
+   real(dp), intent(in) :: incident_kx
+   real(dp), intent(in) :: incident_ky
+   real(dp), intent(in) :: incident_kz
    integer, intent(in) :: gmres_preconditioner_flag
    integer, intent(in) :: convergence_significant_figures
    integer, intent(in) :: nkx
@@ -67,7 +67,7 @@ subroutine run_multiscat_fortran( &
    integer :: i, j, idx, alloc_status
 
    type(OptimizationData) :: optimization_data
-   type(ScatteringData) :: scatt_conditions_data
+   type(IncidentWaveData) :: incident_wave_data
    type(PotentialData) :: potential_data
    type(OutputData) :: output_data
 
@@ -96,10 +96,9 @@ subroutine run_multiscat_fortran( &
    optimization_data%gmres_preconditioner_flag = gmres_preconditioner_flag
    optimization_data%convergence_significant_figures = convergence_significant_figures
 
-   scatt_conditions_data%helium_mass = helium_mass
-   scatt_conditions_data%incident_energy_mev = incident_energy_mev
-   scatt_conditions_data%theta_degrees = theta_degrees
-   scatt_conditions_data%phi_degrees = phi_degrees
+   incident_wave_data%incident_k(1) = incident_kx
+   incident_wave_data%incident_k(2) = incident_ky
+   incident_wave_data%incident_k(3) = incident_kz
 
    potential_data%z_point_count = nz
    potential_data%fourier_component_count = nfc
@@ -153,10 +152,10 @@ subroutine run_multiscat_fortran( &
       end do
    end do
 
-   rmlmda = 2.0_dp * scatt_conditions_data%helium_mass / hbarsq
+   rmlmda = 2.0_dp * helium_mass / hbarsq
 
    potential_data%fixed_fourier_values = potential_values * rmlmda
-   output_data = calculate_output_data(optimization_data, scatt_conditions_data, potential_data)
+   output_data = calculate_output_data(optimization_data, incident_wave_data, potential_data)
 
    channel_count = output_data%condition%channel_count
    if (channel_count .gt. max_channels) then
@@ -185,3 +184,66 @@ subroutine run_multiscat_fortran( &
    if (allocated(potential_data%fourier_indices_y)) deallocate(potential_data%fourier_indices_y)
    if (allocated(potential_data%fixed_fourier_values)) deallocate(potential_data%fixed_fourier_values)
 end subroutine run_multiscat_fortran
+
+subroutine get_perpendicular_kinetic_difference( &
+   incident_kx, &
+   incident_ky, &
+   incident_kz, &
+   nx, &
+   ny, &
+   unit_cell_ax, &
+   unit_cell_ay, &
+   unit_cell_bx, &
+   unit_cell_by, &
+   perpendicular_kinetic_difference, &
+   ierr &
+   )
+   use, intrinsic :: iso_fortran_env, only: real64
+   use scatsub_basis, only: UnitVectors, IncidentWaveData, &
+      get_perpendicular_kinetic_difference_core => &
+      get_perpendicular_kinetic_difference
+   implicit none
+
+   integer, parameter :: dp = real64
+
+   real(dp), intent(in) :: incident_kx
+   real(dp), intent(in) :: incident_ky
+   real(dp), intent(in) :: incident_kz
+   integer, intent(in) :: nx
+   integer, intent(in) :: ny
+   real(dp), intent(in) :: unit_cell_ax
+   real(dp), intent(in) :: unit_cell_ay
+   real(dp), intent(in) :: unit_cell_bx
+   real(dp), intent(in) :: unit_cell_by
+
+   real(dp), intent(out) :: perpendicular_kinetic_difference(nx, ny)
+   integer, intent(out) :: ierr
+
+   type(UnitVectors) :: unit_vectors
+   type(IncidentWaveData) :: incident_wave_data
+
+   ierr = 0
+   perpendicular_kinetic_difference = 0.0_dp
+
+   if (nx .le. 0 .or. ny .le. 0) then
+      ierr = 1
+      return
+   end if
+
+   unit_vectors%ax1 = unit_cell_ax
+   unit_vectors%ay1 = unit_cell_ay
+   unit_vectors%bx1 = unit_cell_bx
+   unit_vectors%by1 = unit_cell_by
+
+   incident_wave_data%incident_k(1) = incident_kx
+   incident_wave_data%incident_k(2) = incident_ky
+   incident_wave_data%incident_k(3) = incident_kz
+
+   call get_perpendicular_kinetic_difference_core( &
+      perpendicular_kinetic_difference, &
+      nx, &
+      ny, &
+      unit_vectors, &
+      incident_wave_data &
+      )
+end subroutine get_perpendicular_kinetic_difference

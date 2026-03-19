@@ -8,10 +8,10 @@ module scatsub_basis
 
    public :: UnitVectors
    public :: ReciprocalVectors
-   public :: ScatteringData
+   public :: IncidentWaveData
    public :: ChannelBasisData
    public :: build_reciprocal_vectors
-   public :: get_perpendicular_momentum
+   public :: get_perpendicular_kinetic_difference
    public :: perpendicular_momentum_as_legacy_data
    public :: build_lobatto_t_matrix
    public :: compute_wave_terms
@@ -30,12 +30,9 @@ module scatsub_basis
       real(dp) :: gby = 0.0_dp
    end type ReciprocalVectors
 
-   type :: ScatteringData
-      real(dp) :: helium_mass = 0.0_dp
-      real(dp) :: incident_energy_mev = 0.0_dp
-      real(dp) :: theta_degrees = 0.0_dp
-      real(dp) :: phi_degrees = 0.0_dp
-   end type ScatteringData
+   type :: IncidentWaveData
+      real(dp) :: incident_k(3) = 0.0_dp
+   end type IncidentWaveData
 
    type :: ChannelBasisData
       integer :: channel_count = 0
@@ -63,30 +60,24 @@ contains
       reciprocal_vectors%gby =  unit_vectors%ax1*recunit
    end subroutine build_reciprocal_vectors
 
-   subroutine get_perpendicular_momentum( &
-   & perpendicular_momentum, nx, ny, unit_vectors, scattering_data)
+   subroutine get_perpendicular_kinetic_difference( &
+   & perpendicular_kinetic_difference, nx, ny, unit_vectors, incident_wave_data)
       implicit none
-      real(dp), intent(out) :: perpendicular_momentum(nx, ny)
+      real(dp), intent(out) :: perpendicular_kinetic_difference(nx, ny)
       integer, intent(in) :: nx, ny
       type(UnitVectors), intent(in) :: unit_vectors
-      type(ScatteringData), intent(in) :: scattering_data
+      type(IncidentWaveData), intent(in) :: incident_wave_data
 
-      real(dp), parameter :: pi = 3.141592653589793_dp
-      real(dp) :: rmlmda
-      real(dp) :: ered, thetad, phid, pkx, pky
+      real(dp) :: pkx, pky, incident_k2
       real(dp) :: gx, gy
       integer :: i, j, i0, j0, igx, igy
       type(ReciprocalVectors) :: reciprocal_vectors
 
       call build_reciprocal_vectors(unit_vectors, reciprocal_vectors)
 
-      rmlmda = 2.0_dp * scattering_data%helium_mass / 4.18020_dp
-      ered   = rmlmda*scattering_data%incident_energy_mev
-      thetad = scattering_data%theta_degrees*pi/180.0d0
-      phid   = scattering_data%phi_degrees*pi/180.0d0
-
-      pkx = sqrt(ered)*sin(thetad)*cos(phid)
-      pky = sqrt(ered)*sin(thetad)*sin(phid)
+      pkx = incident_wave_data%incident_k(1)
+      pky = incident_wave_data%incident_k(2)
+      incident_k2 = sum(incident_wave_data%incident_k**2)
 
       do i = 1, nx
          i0 = i - 1
@@ -98,10 +89,10 @@ contains
             if (j0 .gt. ((ny - 1) / 2)) igy = j0 - ny
             gx = reciprocal_vectors%gax*igx + reciprocal_vectors%gbx*igy
             gy = reciprocal_vectors%gay*igx + reciprocal_vectors%gby*igy
-            perpendicular_momentum(i, j) = (pkx+gx)**2 + (pky+gy)**2 - ered
+            perpendicular_kinetic_difference(i, j) = (pkx+gx)**2 + (pky+gy)**2 - incident_k2
          end do
       end do
-   end subroutine get_perpendicular_momentum
+   end subroutine get_perpendicular_kinetic_difference
 
    function perpendicular_momentum_as_legacy_data(perpendicular_momentum) result(basis_data)
       implicit none

@@ -1,6 +1,7 @@
 module multiscat_core
    use, intrinsic :: iso_fortran_env, only: real64
-   use scatsub_basis, only: UnitVectors, ScatteringData, ChannelBasisData, get_perpendicular_momentum, &
+   use scatsub_basis, only: UnitVectors, IncidentWaveData, ChannelBasisData, &
+      get_perpendicular_kinetic_difference, &
       perpendicular_momentum_as_legacy_data, build_lobatto_t_matrix, compute_wave_terms
    implicit none
    private
@@ -14,7 +15,7 @@ module multiscat_core
    integer, parameter :: n_fourier_components_x = 4096
 
    public :: OptimizationData
-   public :: ScatteringData
+   public :: IncidentWaveData
    public :: PotentialData
    public :: ChannelBasisData
    public :: ScatteringConditionResult
@@ -62,10 +63,10 @@ module multiscat_core
 
 contains
 
-   function calculate_output_data(optimization_data, scatt_conditions_data, potential_data) result(output_data)
+   function calculate_output_data(optimization_data, incident_wave_data, potential_data) result(output_data)
       implicit none
       type(OptimizationData), intent(in) :: optimization_data
-      type(ScatteringData), intent(in) :: scatt_conditions_data
+      type(IncidentWaveData), intent(in) :: incident_wave_data
       type(PotentialData), intent(in) :: potential_data
       type(OutputData) :: output_data
 
@@ -100,8 +101,8 @@ contains
       ny = potential_data%fourier_grid_y_count
       allocate(perpendicular_momentum(nx, ny), stat=alloc_status)
       if (alloc_status /= 0) error stop 'ERROR: allocation failure (perpendicular_momentum).'
-      call get_perpendicular_momentum( &
-         perpendicular_momentum, nx, ny, potential_data%unit_vectors, scatt_conditions_data &
+      call get_perpendicular_kinetic_difference( &
+         perpendicular_momentum, nx, ny, potential_data%unit_vectors, incident_wave_data &
          )
 
       basis_data = perpendicular_momentum_as_legacy_data(perpendicular_momentum)
@@ -119,9 +120,6 @@ contains
 
       call run_scattering_linear_step(optimization_data, potential_data, basis_data, m, a, b, c, p, t, eps)
 
-      output_data%condition%incident_energy_mev = scatt_conditions_data%incident_energy_mev
-      output_data%condition%theta_degrees = scatt_conditions_data%theta_degrees
-      output_data%condition%phi_degrees = scatt_conditions_data%phi_degrees
       output_data%condition%channel_count = basis_data%channel_count
       output_data%condition%specular_channel_index = basis_data%specular_channel_index
       output_data%condition%specular_intensity = p(basis_data%specular_channel_index)
