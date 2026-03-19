@@ -1,6 +1,6 @@
 {
-	"name": "Debian",
-	"image": "mcr.microsoft.com/devcontainers/base:bullseye",
+	"name": "Ubuntu",
+	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
 	"features": {
 		"ghcr.io/devcontainers/features/python:1": {
 			"version": "3.13"
@@ -8,6 +8,9 @@
 		"ghcr.io/va-h/devcontainers-features/uv:1": {
 			"shellautocompletion": true,
 			"version": "latest"
+		},
+		"ghcr.io/devcontainers/features/node:1": {
+			"version": "lts"
 		}
 	},
 	"customizations": {
@@ -81,5 +84,5 @@
 			]
 		}
 	},
-	"onCreateCommand": "uv sync --all-extras"
+	"onCreateCommand": "npm install -g cspell && uv sync --all-extras"
 }

@@ -10,7 +10,8 @@ dependencies = [
     "scipy>=1.14.0,<2.0.0",
     "slate_core @ git+https://github.com/Matt-Ord/slate.git@58261ad",
     "slate_quantum @ git+https://github.com/Matt-Ord/slate_quantum.git@8775660",
-    "tqdm>=4.67.1","multiscat_fortran",
+    "tqdm>=4.67.1",
+    "multiscat_fortran",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +56,9 @@ testpaths = ["tests"]
 typeCheckingMode = "strict"
 include = ["tests", "multiscat", "examples"]
 reportImplicitOverride = true
+
+[tool.setuptools.packages.find]
+include = ["multiscat", "multiscat.*"]
 
 [build-system]
 requires = ["setuptools"]

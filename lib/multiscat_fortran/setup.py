@@ -6,17 +6,20 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path
+from typing import override
 
-from setuptools import Extension, setup
-from setuptools.command.build_ext import build_ext
+from setuptools import Extension, setup  # type: ignore[resolve]
+from setuptools.command.build_ext import build_ext  # type: ignore[resolve]
 
 
-class F2PyBuildExt(build_ext):
+class F2PyBuildExt(build_ext):  # noqa: D101
+    @override
     def run(self) -> None:
         self.build_f2py_extension()
         super().run()
 
     def build_f2py_extension(self) -> None:
+        """Build the Fortran extension using f2py."""
         project_dir = Path(__file__).resolve().parent
         fortran_dir = (project_dir / "fortran").resolve()
         build_temp = Path(self.build_temp)
@@ -24,7 +27,8 @@ class F2PyBuildExt(build_ext):
 
         ext_suffix = sysconfig.get_config_var("EXT_SUFFIX")
         if not ext_suffix:
-            raise RuntimeError("Could not determine Python extension suffix")
+            msg = "Could not determine Python extension suffix"
+            raise RuntimeError(msg)
 
         module_name = "_multiscat_f2py"
         expected_output = build_temp / f"{module_name}{ext_suffix}"
@@ -53,12 +57,13 @@ class F2PyBuildExt(build_ext):
         env["FCFLAGS"] = (env.get("FCFLAGS", "") + " -mcmodel=large").strip()
         env["LDFLAGS"] = (env.get("LDFLAGS", "") + " -mcmodel=large").strip()
 
-        subprocess.run(command, cwd=project_dir, check=True, env=env)
+        subprocess.run(command, cwd=project_dir, check=True, env=env)  # noqa: S603
 
         built_artifacts = sorted(project_dir.glob(f"{module_name}*.so"))
         if not built_artifacts:
+            msg = "f2py build succeeded but no shared library was produced"
             raise RuntimeError(
-                "f2py build succeeded but no shared library was produced"
+                msg,
             )
 
         built_artifact = built_artifacts[0]
