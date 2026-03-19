@@ -47,6 +47,7 @@ class F2PyBuildExt(build_ext):  # noqa: D101
             "fortran/multiscat_python_bindings.f90",
             "fortran/multiscat.f90",
             "fortran/scatsub.f90",
+            "fortran/multiscat_gmres.f90",
             "fortran/diagsub.f",
             "-m",
             module_name,
