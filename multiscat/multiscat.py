@@ -139,9 +139,6 @@ def get_kinetic_difference_operator[
     )
 
 
-
-
-
 def _gmres[DT: np.dtype[np.number]](
     matrix: scipy.sparse.linalg.LinearOperator,
     initial_state: np.ndarray[Any, DT],
@@ -181,7 +178,7 @@ def _gmres[DT: np.dtype[np.number]](
     return cast("np.ndarray[Any, DT]", data)
 
 
-def _get_scattered_state[ # pyright: ignore[reportUnusedFunction]
+def _get_scattered_state[  # pyright: ignore[reportUnusedFunction]
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedMetadata,
     E: AxisDirections,
@@ -257,8 +254,6 @@ def _get_scattered_state[ # pyright: ignore[reportUnusedFunction]
         options=options,
     )
     return State(state_basis, data)
-
-
 
 
 def get_scattered_state[

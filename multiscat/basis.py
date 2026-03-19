@@ -52,7 +52,6 @@ def scattering_metadata_from_stacked_delta_x(
             LobattoSpacedLengthMetadata(
                 shape[2],
                 domain=Domain(delta=delta_v[2]),
-
             ),
         ),
         AxisDirections(vectors=normalized_vectors),
