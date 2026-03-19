@@ -1,10 +1,10 @@
 python module _multiscat_f2py
     interface
-        subroutine run_multiscat_fortran(helium_mass, incident_energy_mev, theta_degrees, phi_degrees, gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by, zmin, zmax, potential_values, max_channels, channel_count, channel_ix, channel_iy, channel_d, channel_intensity, specular_intensity, open_channel_intensity_sum, gmres_failed, ierr)
+        subroutine run_multiscat_fortran(helium_mass, incident_kx, incident_ky, incident_kz, gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by, zmin, zmax, potential_values, max_channels, channel_count, channel_ix, channel_iy, channel_d, channel_intensity, specular_intensity, open_channel_intensity_sum, gmres_failed, ierr)
             double precision intent(in) :: helium_mass
-            double precision intent(in) :: incident_energy_mev
-            double precision intent(in) :: theta_degrees
-            double precision intent(in) :: phi_degrees
+            double precision intent(in) :: incident_kx
+            double precision intent(in) :: incident_ky
+            double precision intent(in) :: incident_kz
             integer intent(in) :: gmres_preconditioner_flag
             integer intent(in) :: convergence_significant_figures
             integer intent(in) :: nkx
@@ -28,5 +28,19 @@ python module _multiscat_f2py
             integer intent(out) :: gmres_failed
             integer intent(out) :: ierr
         end subroutine run_multiscat_fortran
+
+        subroutine get_perpendicular_kinetic_difference(incident_kx, incident_ky, incident_kz, nx, ny, unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by, perpendicular_kinetic_difference, ierr)
+            double precision intent(in) :: incident_kx
+            double precision intent(in) :: incident_ky
+            double precision intent(in) :: incident_kz
+            integer intent(in) :: nx
+            integer intent(in) :: ny
+            double precision intent(in) :: unit_cell_ax
+            double precision intent(in) :: unit_cell_ay
+            double precision intent(in) :: unit_cell_bx
+            double precision intent(in) :: unit_cell_by
+            double precision dimension(nx, ny), intent(out) :: perpendicular_kinetic_difference
+            integer intent(out) :: ierr
+        end subroutine get_perpendicular_kinetic_difference
     end interface
 end python module _multiscat_f2py

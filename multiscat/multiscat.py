@@ -296,10 +296,8 @@ def _condition_parameters(
         raise ValueError(msg)
 
     mass_amu = float(condition.mass / atomic_mass)
-    energy_mev = float(condition.incident_energy / (electron_volt * 10**3))
-    theta_degrees = float(np.degrees(condition.theta))
-    phi_degrees = float(np.degrees(condition.phi))
-    return mass_amu, energy_mev, theta_degrees, phi_degrees
+    kx, ky, kz = condition.incident_k
+    return mass_amu, float(kx), float(ky), float(kz)
 
 
 def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int]:
@@ -393,7 +391,7 @@ def run_multiscat(
     config: OptimizationConfig,
 ) -> dict[tuple[int, int], float]:
     """Run Multiscat through the f2py native binding and return intensities."""
-    mass_amu, energy_mev, theta_degrees, phi_degrees = _condition_parameters(condition)
+    mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(condition)
     (
         gmres_preconditioner_flag,
         convergence_significant_figures,
@@ -424,9 +422,9 @@ def run_multiscat(
         ierr,
     ) = run_multiscat_fortran(
         mass_amu,
-        energy_mev,
-        theta_degrees,
-        phi_degrees,
+        incident_kx,
+        incident_ky,
+        incident_kz,
         gmres_preconditioner_flag,
         convergence_significant_figures,
         nkx=nkx,
