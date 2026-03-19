@@ -20,6 +20,8 @@ class OptimizationConfig:
 
     precision: float = 1e-5
     max_iterations: int = 1000
+    max_channel_index: int | None = None
+    max_negative_energy: float | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
