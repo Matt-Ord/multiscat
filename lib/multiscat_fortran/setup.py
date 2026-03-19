@@ -34,7 +34,7 @@ class F2PyBuildExt(build_ext):  # noqa: D101
         expected_output = build_temp / f"{module_name}{ext_suffix}"
 
         f77flags = f"-I{fortran_dir} -ffixed-line-length-none"
-        f90flags = f"-I{fortran_dir} -ffree-line-length-none" # cspell: disable-line
+        f90flags = f"-I{fortran_dir} -ffree-line-length-none"  # cspell: disable-line
 
         command = [
             sys.executable,
