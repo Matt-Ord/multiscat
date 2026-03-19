@@ -1,0 +1,34 @@
+python module _multiscat_f2py
+    interface
+        subroutine run_multiscat_fortran(helium_mass, incident_energy_mev, theta_degrees, phi_degrees, gmres_preconditioner_flag, convergence_significant_figures, max_closed_channel_energy, max_channel_index, nkx, nky, nz, unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by, zmin, zmax, potential_values, max_channels, channel_count, channel_ix, channel_iy, channel_d, channel_intensity, specular_intensity, open_channel_intensity_sum, gmres_failed, ierr)
+            double precision intent(in) :: helium_mass
+            double precision intent(in) :: incident_energy_mev
+            double precision intent(in) :: theta_degrees
+            double precision intent(in) :: phi_degrees
+            integer intent(in) :: gmres_preconditioner_flag
+            integer intent(in) :: convergence_significant_figures
+            double precision intent(in) :: max_closed_channel_energy
+            integer intent(in) :: max_channel_index
+            integer intent(in) :: nkx
+            integer intent(in) :: nky
+            integer intent(in) :: nz
+            double precision intent(in) :: unit_cell_ax
+            double precision intent(in) :: unit_cell_ay
+            double precision intent(in) :: unit_cell_bx
+            double precision intent(in) :: unit_cell_by
+            double precision intent(in) :: zmin
+            double precision intent(in) :: zmax
+            complex*16 dimension(nz, nkx*nky), intent(in) :: potential_values
+            integer intent(in) :: max_channels
+            integer intent(out) :: channel_count
+            integer dimension(max_channels), intent(out) :: channel_ix
+            integer dimension(max_channels), intent(out) :: channel_iy
+            double precision dimension(max_channels), intent(out) :: channel_d
+            double precision dimension(max_channels), intent(out) :: channel_intensity
+            double precision intent(out) :: specular_intensity
+            double precision intent(out) :: open_channel_intensity_sum
+            integer intent(out) :: gmres_failed
+            integer intent(out) :: ierr
+        end subroutine run_multiscat_fortran
+    end interface
+end python module _multiscat_f2py

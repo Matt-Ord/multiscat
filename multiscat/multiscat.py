@@ -273,3 +273,162 @@ def get_scattered_state[
 
     msg = "This function is not implemented yet."
     raise NotImplementedError(msg)
+
+
+def _condition_parameters(condition: ScatteringCondition) -> tuple[float, float, float, float]:
+    scattering_vector = np.asarray(condition.incident_k)
+    scattering_magnitude = float(np.linalg.norm(scattering_vector))
+    if scattering_magnitude <= 0:
+        msg = "Incident wavevector magnitude must be non-zero"
+        raise ValueError(msg)
+
+    mass_amu = float(condition.mass / atomic_mass)
+    energy_meV = float(condition.incident_energy / (electron_volt * 10**3))
+    theta_degrees = float(np.degrees(condition.theta))
+    phi_degrees = float(np.degrees(condition.phi))
+    return mass_amu, energy_meV, theta_degrees, phi_degrees
+
+
+
+
+def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int, float, int]:
+    if config.precision <= 0:
+        msg = "Optimization precision must be greater than zero"
+        raise ValueError(msg)
+
+    gmres_preconditioner_flag = 0
+    convergence_significant_figures = int(np.log10(1 / config.precision))
+    max_closed_channel_energy = (
+        float(config.max_negative_energy / (electron_volt * 10**3))
+        if config.max_negative_energy is not None
+        else 120.0
+    )
+    max_channel_index = int(
+        config.max_channel_index if config.max_channel_index is not None else 120
+    )
+    return (
+        gmres_preconditioner_flag,
+        convergence_significant_figures,
+        max_closed_channel_energy,
+        max_channel_index,
+    )
+
+
+def _raw_potential_in_input_file_convention(
+    potential: ScatteringOperator,
+) -> np.ndarray[Any, np.dtype[np.complex128]]:
+    potential_diagonal = array.extract_diagonal(potential)
+    nx, ny, nz = potential_diagonal.basis.metadata().shape
+    basis_weights = potential_diagonal.basis.metadata().children[2].basis_weights
+    basis = close_coupling_basis(potential_diagonal.basis.metadata())
+
+    data = potential_diagonal.with_basis(basis).raw_data
+    data = data.reshape((nx, ny, nz)) * basis_weights[np.newaxis, np.newaxis, :]
+
+    # Multiscat uses a slightly different Fourier convention.
+    return data.ravel() / (electron_volt * 10**-3 * np.sqrt(nx * ny))
+
+
+def _potential_parameters(
+    potential: ScatteringOperator,
+) -> tuple[int, int, int, float, float, float, float, float, float, np.ndarray[Any, np.dtype[np.complex128]]]:
+    potential_lobatto = _raw_potential_in_input_file_convention(potential)
+    metadata = potential.basis.metadata().children[0]
+    nx, ny, nz = metadata.shape
+    z_domain = metadata.children[2].domain
+    z_start_angstrom = float(z_domain.start / angstrom)
+    z_end_angstrom = float((z_domain.start + z_domain.delta) / angstrom)
+
+    metadata_x01, _ = split_scattering_metadata(metadata)
+    directions = metadata.extra.vectors
+    x_vector = np.asarray(directions[0]) * metadata_x01.children[0].domain.delta
+    y_vector = np.asarray(directions[1]) * metadata_x01.children[1].domain.delta
+    ax_angstrom = float(x_vector[0] / angstrom)
+    ay_angstrom = float(x_vector[1] / angstrom)
+    bx_angstrom = float(y_vector[0] / angstrom)
+    by_angstrom = float(y_vector[1] / angstrom)
+
+    nfc = nx * ny
+    potential_matrix = np.asfortranarray(potential_lobatto.reshape((nfc, nz)).T)
+    return (
+        int(nx),
+        int(ny),
+        int(nz),
+        ax_angstrom,
+        ay_angstrom,
+        bx_angstrom,
+        by_angstrom,
+        z_start_angstrom,
+        z_end_angstrom,
+        potential_matrix,
+    )
+
+
+def run_multiscat(
+    condition: ScatteringCondition, config: OptimizationConfig
+) -> dict[tuple[int, int], float]:
+    """Run Multiscat through the f2py native binding and return intensities."""
+    mass_amu, energy_meV, theta_degrees, phi_degrees = _condition_parameters(condition)
+    (
+        gmres_preconditioner_flag,
+        convergence_significant_figures,
+        max_closed_channel_energy,
+        max_channel_index,
+    ) = _optimization_parameters(config)
+    (
+        nkx,
+        nky,
+        nz,
+        unit_cell_ax,
+        unit_cell_ay,
+        unit_cell_bx,
+        unit_cell_by,
+        zmin,
+        zmax,
+        potential_values,
+    ) = _potential_parameters(condition.potential)
+
+    max_channels = 1024
+    (
+        channel_count,
+        channel_ix,
+        channel_iy,
+        channel_d,
+        channel_intensity,
+        _,
+        _,
+        _,
+        ierr,
+    ) = run_multiscat_fortran(
+        mass_amu,
+        energy_meV,
+        theta_degrees,
+        phi_degrees,
+        gmres_preconditioner_flag,
+        convergence_significant_figures,
+        max_closed_channel_energy,
+        max_channel_index,
+        nkx,
+        nky,
+        unit_cell_ax,
+        unit_cell_ay,
+        unit_cell_bx,
+        unit_cell_by,
+        zmin,
+        zmax,
+        potential_values,
+        max_channels,
+        nz=nz,
+    )
+
+    if ierr != 0:
+        msg = f"Fortran run_multiscat_fortran failed with error code {ierr}"
+        raise RuntimeError(msg)
+
+    intensities: dict[tuple[int, int], float] = {}
+    for idx in range(int(channel_count)):
+        if channel_d[idx] < 0.0:
+            intensities[(int(channel_ix[idx]), int(channel_iy[idx]))] = float(
+                channel_intensity[idx]
+            )
+    return intensities

@@ -1,0 +1,22 @@
+[build-system]
+requires = [
+  "setuptools>=69",
+  "wheel",
+  "numpy>=2.0.0,<3.0.0",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multiscat_fortran"
+version = "0.1.0"
+description = "Standalone f2py bindings for Multiscat Fortran core"
+requires-python = ">=3.14"
+dependencies = [
+  "numpy>=2.0.0,<3.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
