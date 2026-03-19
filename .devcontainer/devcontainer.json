@@ -79,9 +79,9 @@
 				"GitHub.copilot",
 				"ms-python.vscode-pylance",
 				"ms-vscode.cpptools",
-				"fortran-lang.linter-gfortran",
+				"fortran-lang.linter-gfortran"
 			]
 		}
 	},
-	"onCreateCommand": "npm install -g cspell && uv python install && uv sync --all-extras"
+	"onCreateCommand": "npm install -g cspell && sudo apt-get update && sudo  apt-get install -y libgfortran5 && uv python install && uv sync --all-extras"
 }
