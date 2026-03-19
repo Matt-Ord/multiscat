@@ -5,7 +5,7 @@ module multiscat_core
   integer, parameter :: NVFCFIXED_MAX = 4096
   integer, parameter :: nmax = 1024
   integer, parameter :: mmax = 550
-  integer, parameter :: nfcx = 4096
+  integer, parameter :: n_fourier_components_x = 4096
 
   type :: OptimizationData
     integer :: output_mode = 0
@@ -32,12 +32,20 @@ module multiscat_core
     double precision :: unit_cell_ay = 0.0d0
     double precision :: unit_cell_bx = 0.0d0
     double precision :: unit_cell_by = 0.0d0
-    double precision :: zmin = 0.0d0
-    double precision :: zmax = 0.0d0
+    double precision :: z_min = 0.0d0
+    double precision :: z_max = 0.0d0
     integer, allocatable :: fourier_indices_x(:)
     integer, allocatable :: fourier_indices_y(:)
     complex*16, allocatable :: fixed_fourier_values(:,:)
   end type PotentialData
+
+  type :: ChannelBasisData
+    integer :: channel_count = 0
+    integer :: specular_channel_index = 0
+    integer :: channel_index_x(nmax) = 0
+    integer :: channel_index_y(nmax) = 0
+    double precision :: channel_energy_z(nmax) = 0.0d0
+  end type ChannelBasisData
 
   type :: ScatteringConditionResult
     double precision :: incident_energy_mev = 0.0d0
@@ -69,75 +77,87 @@ contains
 
     integer, parameter :: lmax = 901
 
-    integer :: ipc, nsf, imax
-    integer :: nfc, nzfixed, nfc00
-    integer :: m, i, j, n, n00, ifail
+    integer :: ipc, nsf, max_channel_index
+    integer :: n_fourier_components, n_z_points
+    integer :: specular_fourier_component_index
+    integer :: m, i, j, ifail
 
-    double precision :: eps, dmax
+    double precision :: eps, max_closed_channel_energy
     double precision :: ax, ay, bx, by, ei, theta, phi, a0
     double precision :: hemass, rmlmda
-    double precision :: zmin, zmax
+    double precision :: z_min, z_max
     double precision :: open_sum
 
-    complex*16 :: x(mmax,nmax), y(mmax,nmax), vfc(mmax,nfcx)
-    complex*16 :: xx(nmax*mmax,lmax)
-    complex*16 :: a(nmax), b(nmax), c(nmax), s(nmax)
-    complex*16 :: vfcfixed(NZFIXED_MAX,NVFCFIXED_MAX)
+    complex*16, allocatable :: x(:,:), y(:,:)
+    complex*16, allocatable :: xx(:,:)
+    complex*16, allocatable :: a(:), b(:), c(:), s(:)
 
-    integer :: ix(nmax), iy(nmax), ivx(nfcx), ivy(nfcx)
-    double precision :: p(nmax), w(mmax), z(mmax)
-    double precision :: d(nmax), e(mmax), f(mmax,nmax), t(mmax,mmax)
+    type(ChannelBasisData) :: basis_data
+
+    double precision, allocatable :: p(:), w(:), z(:)
+    double precision, allocatable :: e(:), f(:,:), t(:,:)
 
     common /const/ hemass, rmlmda
     common /cells/ ax,ay,bx,by,ei,theta,phi,a0
 
+    allocate(x(mmax,nmax), y(mmax,nmax))
+    allocate(xx(nmax*mmax,lmax))
+    allocate(a(nmax), b(nmax), c(nmax), s(nmax))
+
+    allocate(p(nmax), w(mmax), z(mmax))
+    allocate(e(mmax), f(mmax,nmax), t(mmax,mmax))
+
     ipc = optimization_data%gmres_preconditioner_flag
     nsf = optimization_data%convergence_significant_figures
     eps = 0.5d0*(10.0d0**(-nsf))
-    dmax = optimization_data%max_closed_channel_energy
-    imax = optimization_data%max_channel_index
+    max_closed_channel_energy = optimization_data%max_closed_channel_energy
+    max_channel_index = optimization_data%max_channel_index
 
-    nfc = potential_data%fourier_component_count
-    nzfixed = potential_data%z_point_count
-    nfc00 = potential_data%specular_component_index
+    n_fourier_components = potential_data%fourier_component_count
+    n_z_points = potential_data%z_point_count
+    specular_fourier_component_index = potential_data%specular_component_index
     ax = potential_data%unit_cell_ax
     ay = potential_data%unit_cell_ay
     bx = potential_data%unit_cell_bx
     by = potential_data%unit_cell_by
-    zmin = potential_data%zmin
-    zmax = potential_data%zmax
-
-    ivx(1:nfc) = potential_data%fourier_indices_x(1:nfc)
-    ivy(1:nfc) = potential_data%fourier_indices_y(1:nfc)
-    vfcfixed(1:nzfixed,1:nfc) = potential_data%fixed_fourier_values(1:nzfixed,1:nfc)
+    z_min = potential_data%z_min
+    z_max = potential_data%z_max
 
     ei = scatt_conditions_data%incident_energy_mev
     theta = scatt_conditions_data%theta_degrees
     phi = scatt_conditions_data%phi_degrees
 
-    m = nzfixed
+    m = n_z_points
     if (m.gt.mmax) stop 'ERROR: m too big!'
 
-    call tshape (zmin,zmax,m,w,z,t)
+    call build_lobatto_t_matrix(z_min,z_max,m,w,z,t)
 
-    do i = 1,nfc
-      do j = 1,m
-        vfc(j,i)=vfcfixed(j,i)
-      end do
-    end do
+    call get_momentum_basis( &
+      basis_data%channel_count, basis_data%specular_channel_index, &
+      basis_data%channel_index_x, basis_data%channel_index_y, &
+      basis_data%channel_energy_z, max_closed_channel_energy, &
+      max_channel_index &
+    )
+    if (basis_data%channel_count.gt.nmax) stop 'ERROR: n too big!'
 
-    call basis(d,ix,iy,n,n00,dmax,imax)
-    if (n.gt.nmax) stop 'ERROR: n too big!'
-
-    do i = 1,n
-      call waves (d(i),a(i),b(i),c(i),zmax)
+    do i = 1,basis_data%channel_count
+      call compute_wave_terms (basis_data%channel_energy_z(i),a(i),b(i),c(i),z_max)
       b(i) = b(i)/w(m)
       c(i) = c(i)/(w(m)**2)
     end do
 
-    call precon (m,n,vfc,nfc,nfc00,d,e,f,t)
+    call build_preconditioner ( &
+      m, basis_data%channel_count, potential_data%fixed_fourier_values, n_fourier_components, &
+      specular_fourier_component_index, basis_data%channel_energy_z, e, f, t &
+    )
     ifail = 0
-    call gmres  (x,xx,y,m,ix,iy,n,n00,vfc,ivx,ivy,nfc,a,b,c,d,e,f,p,s,t,eps,ipc,ifail)
+    call solve_gmres_system ( &
+      x, xx, y, m, basis_data%channel_index_x, basis_data%channel_index_y, &
+      basis_data%channel_count, basis_data%specular_channel_index, &
+      potential_data%fixed_fourier_values, &
+      potential_data%fourier_indices_x, potential_data%fourier_indices_y, n_fourier_components, &
+      a, b, c, basis_data%channel_energy_z, e, f, p, s, t, eps, ipc, ifail &
+    )
 
     if (ifail.eq.1) then
       p = -1
@@ -146,25 +166,32 @@ contains
     output_data%condition%incident_energy_mev = ei
     output_data%condition%theta_degrees = theta
     output_data%condition%phi_degrees = phi
-    output_data%condition%channel_count = n
-    output_data%condition%specular_channel_index = n00
-    output_data%condition%specular_intensity = p(n00)
+    output_data%condition%channel_count = basis_data%channel_count
+    output_data%condition%specular_channel_index = basis_data%specular_channel_index
+    output_data%condition%specular_intensity = p(basis_data%specular_channel_index)
     output_data%condition%gmres_failed = (ifail.eq.1)
 
-    allocate(output_data%condition%channel_ix(n))
-    allocate(output_data%condition%channel_iy(n))
-    allocate(output_data%condition%channel_d(n))
-    allocate(output_data%condition%channel_intensity(n))
-    output_data%condition%channel_ix(1:n) = ix(1:n)
-    output_data%condition%channel_iy(1:n) = iy(1:n)
-    output_data%condition%channel_d(1:n) = d(1:n)
-    output_data%condition%channel_intensity(1:n) = p(1:n)
+    allocate(output_data%condition%channel_ix(basis_data%channel_count))
+    allocate(output_data%condition%channel_iy(basis_data%channel_count))
+    allocate(output_data%condition%channel_d(basis_data%channel_count))
+    allocate(output_data%condition%channel_intensity(basis_data%channel_count))
+    output_data%condition%channel_ix(1:basis_data%channel_count) = &
+      basis_data%channel_index_x(1:basis_data%channel_count)
+    output_data%condition%channel_iy(1:basis_data%channel_count) = &
+      basis_data%channel_index_y(1:basis_data%channel_count)
+    output_data%condition%channel_d(1:basis_data%channel_count) = &
+      basis_data%channel_energy_z(1:basis_data%channel_count)
+    output_data%condition%channel_intensity(1:basis_data%channel_count) = &
+      p(1:basis_data%channel_count)
 
     open_sum = 0.0d0
-    do j = 1,n
-      if (d(j).lt.0.0d0) open_sum = open_sum + p(j)
+    do j = 1,basis_data%channel_count
+      if (basis_data%channel_energy_z(j).lt.0.0d0) open_sum = open_sum + p(j)
     end do
     output_data%condition%open_channel_intensity_sum = open_sum
+
+    deallocate(x, y, xx, a, b, c, s)
+    deallocate(p, w, z, e, f, t)
   end function calculate_output_data
 
 end module multiscat_core
