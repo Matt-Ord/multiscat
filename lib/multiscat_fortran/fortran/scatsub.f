@@ -1,4 +1,8 @@
-      subroutine basis(d,ix,iy,n,n00,dmax,imax)
+      subroutine get_momentum_basis(channel_count,specular_channel_index,
+     +                              channel_index_x,channel_index_y,
+     +                              channel_energy_z,
+     +                              max_closed_channel_energy,
+     +                              max_channel_index)
       implicit double precision (a-h,o-z)
 c     
 c     calculate reciprocal lattice
@@ -26,7 +30,9 @@ c     if d(i) < 0, channel open, possible diffraction spot
 c     if d(i) > 0, channel closed, no spot
 c     
       include 'multiscat.inc'
-      dimension d(nmax), ix(nmax), iy(nmax)
+      integer channel_count, specular_channel_index, max_channel_index
+      dimension channel_energy_z(nmax)
+      integer channel_index_x(nmax), channel_index_y(nmax)
       
       common /cells/ ax,ay,bx,by,ei,theta,phi,a0,gax,gay,gbx,gby
       common /const/ hemass,rmlmda ! = 2m/h^2 !modified by Boyao on 6 Dec 2020
@@ -47,20 +53,21 @@ c
       pkx = sqrt(ered)*sin(thetad)*cos(phid)
       pky = sqrt(ered)*sin(thetad)*sin(phid)
       
-      n=0
-      do i1 = -imax,imax
-         do i2 = -imax,imax
+      channel_count=0
+      do i1 = -max_channel_index,max_channel_index
+         do i2 = -max_channel_index,max_channel_index
             gx = gax*i1 + gbx*i2
             gy = gay*i1 + gby*i2
             eint = (pkx+gx)**2 + (pky+gy)**2
             di = eint-ered
-            if (di.lt.dmax) then 
-               n=n+1
-               if (n.le.nmax) then
-                  ix(n)=i1
-                  iy(n)=i2
-                  d(n)=di
-                  if ((i1.eq.0) .and. (i2.eq.0)) n00=n
+            if (di.lt.max_closed_channel_energy) then 
+               channel_count=channel_count+1
+               if (channel_count.le.nmax) then
+                  channel_index_x(channel_count)=i1
+                  channel_index_y(channel_count)=i2
+                  channel_energy_z(channel_count)=di
+                  if ((i1.eq.0) .and. (i2.eq.0))
+     +               specular_channel_index=channel_count
                else
                   stop 'ERROR: n too big! (basis)'
             end if
@@ -70,10 +77,10 @@ c
       
       
       return
-      end subroutine basis
+      end subroutine get_momentum_basis
          
       
-      subroutine tshape (a,b,m,w,x,t)
+      subroutine build_lobatto_t_matrix (a,b,m,w,x,t)
       implicit double precision (a-h,o-z)
       include 'multiscat.inc'
 c     
@@ -98,7 +105,7 @@ c
 c     I think, that this is needed for the sum defined in Lsf to work
       n = m+1
 c     Get points and weights for n point Lobatto quadrature in (a,b)
-      call lobatto (a,b,n,ww,xx)
+      call compute_lobatto_rule (a,b,n,ww,xx)
       
 c     No idea why it's done
       do 1 i = 1,n
@@ -170,7 +177,7 @@ c           t is symmetric
       
 
 
-      subroutine lobatto (a,b,n,w,x)
+      subroutine compute_lobatto_rule (a,b,n,w,x)
       implicit double precision (a-h,o-z)   
 c     ----------------------------------------------------------------- 
 c     This subroutine calculates an n-point Gauss-Lobatto
@@ -241,7 +248,7 @@ c     Specific to Lobatto quadrature, last point is b
       return
       end
        
-      subroutine waves (w0,a,b,c,zmax)
+      subroutine compute_wave_terms (w0,a,b,c,z_max)
       implicit double precision (a-h,o-z)
 c
 c     ------------------------------------------------------------------
@@ -253,7 +260,7 @@ c
 c
       dk = sqrt (dabs(w0))
       if (w0 .lt. 0.0d0) then
-         theta = dk*zmax
+         theta = dk*z_max
          bcc   = cos(2.0d0*theta)
          bcs   = sin(2.0d0*theta)
          cc    = cos(theta)
@@ -269,9 +276,14 @@ c
       return
       end
  
-      subroutine precon (m,n,vfc,nfc,nfc00,d,e,f,t)
+         subroutine build_preconditioner (n_z_points,channel_count,
+     +    fourier_values,n_fourier_components,
+     +    specular_fourier_component_index,channel_energy_z,
+     +    eigenvalues,preconditioner_factors,kinetic_matrix)
       implicit double precision (a-h,o-z)
       include 'multiscat.inc'
+         integer n_z_points, channel_count
+         integer n_fourier_components, specular_fourier_component_index
 c
 c     ------------------------------------------------------------------
 c     This subroutine constructs the matrix factors that are required
@@ -280,36 +292,44 @@ c
 c	   t is the matrix from tshapes
 c     ------------------------------------------------------------------
 c
-      complex*16 vfc(m,nfc)
-      dimension d(n), e(m), f(m,n), t(m,m)
+      complex*16 fourier_values(n_z_points,n_fourier_components)
+      dimension channel_energy_z(channel_count)
+      dimension eigenvalues(n_z_points)
+      dimension preconditioner_factors(n_z_points,channel_count)
+      double precision kinetic_matrix(n_z_points,n_z_points)
       dimension g(mmax)
 
 c	   if m exceeds maximum size of m program terminates printing out precon 1
-      if (m .gt. mmax) stop 'precon 1'
+      if (n_z_points .gt. mmax) stop 'precon 1'
 c
-      do k = 1,m
+      do k = 1,n_z_points
 c        dble(x) transfroms input into double precision real
 c        for complex numbers it will return only real part
 c        This overwrites t to be H0 (as named in '90 Kohn paper)
-         t(k,k) = t(k,k) + dble(vfc(k,nfc00))
+          kinetic_matrix(k,k) = kinetic_matrix(k,k) +
+     +                        dble(fourier_values(k,
+     +                        specular_fourier_component_index))
       enddo
 
 c	   get eigenvalues [e] and eigenvectors [ overwrite them on t] of t, 
 c	   which is m x m symmetric real matrix. f is temporary storage array
-      call rs (m,m,t,e,t,f,ierr)     
+         call rs (n_z_points,n_z_points,kinetic_matrix,eigenvalues,
+     +         kinetic_matrix,preconditioner_factors,ierr)     
 c	   if ierr != 0 program terminates printing out precon 2, meaning rs failed
       if (ierr .ne. 0) stop 'precon 2' 
       
-      do j = 1,n
+      do j = 1,channel_count
       
-         do k = 1,m
-            g(k) = t(m,k)/(d(j)+e(k))
-            f(k,j) = 0.0d0
+         do k = 1,n_z_points
+            g(k) = kinetic_matrix(n_z_points,k)
+     +             /(channel_energy_z(j)+eigenvalues(k))
+            preconditioner_factors(k,j) = 0.0d0
          enddo
          
-         do i = 1,m
-            do k = 1,m
-               f(k,j) = f(k,j) + t(k,i)*g(i)
+         do i = 1,n_z_points
+            do k = 1,n_z_points
+               preconditioner_factors(k,j) =
+     +            preconditioner_factors(k,j) + kinetic_matrix(k,i)*g(i)
             enddo
          enddo
          
@@ -317,7 +337,7 @@ c	   if ierr != 0 program terminates printing out precon 2, meaning rs failed
       return
       end
  
-      subroutine gmres (x,xx,y,m,ix,iy,n,n00,vfc,ivx,ivy,nfc,
+      subroutine solve_gmres_system (x,xx,y,m,ix,iy,n,n00,vfc,ivx,ivy,nfc,
      +                  a,b,c,d,e,f,p,s,t,eps,ipc,ifail)
       implicit double precision (a-h,o-z)
 c
@@ -361,12 +381,12 @@ c
       do i = 1,mn
          y(i) = x(i)
       enddo
-      call upper (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
+      call apply_upper_block (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
       do i = 1,mn
          x(i) = -x(i)
       enddo
       x(m*n00) = b(n00)+x(m*n00)
-      call lower (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
+      call solve_lower_block (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
       do i = 1,mn
          x(i) = x(i)-y(i)
       enddo
@@ -374,8 +394,8 @@ c
          do i = 1,mn
             y(i) = x(i)
          enddo
-         call upper (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
-         call lower (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
+         call apply_upper_block (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
+         call solve_lower_block (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
          do i = 1,mn
             x(i) = y(i)-x(i)
          enddo
@@ -402,8 +422,8 @@ c
          do i = 1,mn
             y(i) = x(i)
          enddo
-         call upper (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
-         call lower (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
+         call apply_upper_block (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
+         call solve_lower_block (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
          do i = 1,mn
             x(i) = y(i)+x(i)
          enddo
@@ -411,8 +431,8 @@ c
             do i = 1,mn
                y(i) = x(i)
             enddo
-            call upper (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
-            call lower (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
+            call apply_upper_block (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
+            call solve_lower_block (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
             do i = 1,mn
                x(i) = y(i)-x(i)
             enddo
@@ -451,7 +471,7 @@ c
             h(j+1,k) = conjg(co(j))*h(j+1,k)-si(j)*h(j,k)
             h(j,k) = temp 
          enddo
-         call zrotg (h(k,k),h(k+1,k),co(k),si(k))
+         call compute_complex_givens_rotation (h(k,k),h(k+1,k),co(k),si(k))
          g(k+1) = -si(k)*g(k)
          g(k) = co(k)*g(k)
          do j = 1,k
@@ -506,7 +526,10 @@ c
       return
       end
 
-      subroutine upper (x,m,ix,iy,n,vfc,ivx,ivy,nfc)
+         subroutine apply_upper_block (state_vector,n_z_points,
+     +    channel_index_x,channel_index_y,channel_count,
+     +    fourier_values,fourier_index_x,fourier_index_y,
+     +    n_fourier_components)
       implicit double precision (a-h,o-z)
 c
 c     ----------------------------------------------------------
@@ -515,19 +538,26 @@ c     matrix multiplication y = U*x, where A = L+U.
 c     The result y is overwritten on x on return. 
 c     ----------------------------------------------------------
 c
-      complex*16 x(m,n), vfc(m,nfc)
-      dimension ix(n), iy(n), ivx(nfc), ivy(nfc)
+      integer n_z_points, channel_count, n_fourier_components
+      complex*16 state_vector(n_z_points,channel_count)
+      complex*16 fourier_values(n_z_points,n_fourier_components)
+      integer channel_index_x(channel_count), channel_index_y(channel_count)
+      integer fourier_index_x(n_fourier_components)
+      integer fourier_index_y(n_fourier_components)
 c
-      do j = 1,n
-         do k = 1,m
-            x(k,j) = (0.0d0,0.0d0)
+      do j = 1,channel_count
+         do k = 1,n_z_points
+            state_vector(k,j) = (0.0d0,0.0d0)
          enddo
-         do i = j+1,n
-            do l = 1,nfc
-               if (ix(i) + ivx(l) .ne. ix(j)) go to 1
-               if (iy(i) + ivy(l) .ne. iy(j)) go to 1
-                  do k = 1,m
-                     x(k,j) = x(k,j)+vfc(k,l)*x(k,i)
+         do i = j+1,channel_count
+            do l = 1,n_fourier_components
+               if (channel_index_x(i) + fourier_index_x(l)
+     +             .ne. channel_index_x(j)) go to 1
+               if (channel_index_y(i) + fourier_index_y(l)
+     +             .ne. channel_index_y(j)) go to 1
+                  do k = 1,n_z_points
+                     state_vector(k,j) = state_vector(k,j) +
+     +                                  fourier_values(k,l)*state_vector(k,i)
                   enddo
    1           continue
             enddo
@@ -536,7 +566,11 @@ c
       return
       end
 
-      subroutine lower (x,m,ix,iy,n,vfc,ivx,ivy,nfc,c,d,e,f,t)
+         subroutine solve_lower_block (state_vector,n_z_points,
+     +    channel_index_x,channel_index_y,channel_count,
+     +    fourier_values,fourier_index_x,fourier_index_y,
+     +    n_fourier_components,wave_c,channel_energy_z,
+     +    eigenvalues,preconditioner_factors,kinetic_matrix)
       implicit double precision (a-h,o-z)
       include 'multiscat.inc'
 c
@@ -546,50 +580,62 @@ c     linear equation L*y = x, where A = L+U.
 c     The result y is overwritten on x on return.
 c     ----------------------------------------------------------
 c
-      complex*16 x(m,n), vfc(m,nfc), c(n)
-      dimension ix(n), iy(n), ivx(nfc), ivy(nfc)
-      dimension d(n), e(m), f(m,n), t(m,m)
+      integer n_z_points, channel_count, n_fourier_components
+      complex*16 state_vector(n_z_points,channel_count)
+      complex*16 fourier_values(n_z_points,n_fourier_components)
+      complex*16 wave_c(channel_count)
+      integer channel_index_x(channel_count), channel_index_y(channel_count)
+      integer fourier_index_x(n_fourier_components)
+      integer fourier_index_y(n_fourier_components)
+      dimension channel_energy_z(channel_count), eigenvalues(n_z_points)
+      dimension preconditioner_factors(n_z_points,channel_count)
+      double precision kinetic_matrix(n_z_points,n_z_points)
 c
       
       !parameter (mmax = 200)
       complex*16 y(mmax), fac
-      if (m .gt. mmax) stop 'lower 1'
+      if (n_z_points .gt. mmax) stop 'lower 1'
 c
-      do j = 1,n
+      do j = 1,channel_count
          do i = 1,j-1
-            do l = 1,nfc
-               if (ix(i) + ivx(l) .ne. ix(j)) go to 1
-               if (iy(i) + ivy(l) .ne. iy(j)) go to 1
-                  do k = 1,m
-                     x(k,j) = x(k,j)-vfc(k,l)*x(k,i)
+            do l = 1,n_fourier_components
+               if (channel_index_x(i) + fourier_index_x(l)
+     +             .ne. channel_index_x(j)) go to 1
+               if (channel_index_y(i) + fourier_index_y(l)
+     +             .ne. channel_index_y(j)) go to 1
+                  do k = 1,n_z_points
+                     state_vector(k,j) = state_vector(k,j)
+     +                                  - fourier_values(k,l)*state_vector(k,i)
                   enddo
    1           continue
             enddo
          enddo
-         do k = 1,m
+         do k = 1,n_z_points
             y(k) = (0.0d0,0.0d0)
-            do l = 1,m
-               y(k) = y(k)+x(l,j)*t(l,k)
+            do l = 1,n_z_points
+               y(k) = y(k)+state_vector(l,j)*kinetic_matrix(l,k)
             enddo
-            y(k) = y(k)/(d(j)+e(k))
+            y(k) = y(k)/(channel_energy_z(j)+eigenvalues(k))
          enddo
-         do k = 1,m
-            x(k,j) = (0.0d0,0.0d0)
+         do k = 1,n_z_points
+            state_vector(k,j) = (0.0d0,0.0d0)
          enddo
-         do l = 1,m
-            do k = 1,m
-               x(k,j) = x(k,j)+t(k,l)*y(l)
+         do l = 1,n_z_points
+            do k = 1,n_z_points
+               state_vector(k,j) = state_vector(k,j)+kinetic_matrix(k,l)*y(l)
             enddo
          enddo
-         fac = x(m,j)*c(j)/(1.0d0-f(m,j)*c(j))
-         do k = 1,m
-            x(k,j) = x(k,j)+fac*f(k,j)
+         fac = state_vector(n_z_points,j)*wave_c(j)/
+     +         (1.0d0-preconditioner_factors(n_z_points,j)*wave_c(j))
+         do k = 1,n_z_points
+            state_vector(k,j) = state_vector(k,j) +
+     +                          fac*preconditioner_factors(k,j)
          enddo
       enddo
       return
       end
  
-      subroutine zrotg (a,b,c,s)
+      subroutine compute_complex_givens_rotation (a,b,c,s)
       implicit complex*16 (a-h,o-z)
       double precision scale,r
 c
