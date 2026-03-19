@@ -1,7 +1,7 @@
 module multiscat_core
    use, intrinsic :: iso_fortran_env, only: real64
-   use scatsub_basis, only: ChannelBasisData, populate_momentum_basis, &
-      build_lobatto_t_matrix, compute_wave_terms
+   use scatsub_basis, only: UnitVectors, ScatteringData, ChannelBasisData, get_perpendicular_momentum, &
+      perpendicular_momentum_as_legacy_data, build_lobatto_t_matrix, compute_wave_terms
    implicit none
    private
 
@@ -25,16 +25,7 @@ module multiscat_core
       integer :: output_mode = 0
       integer :: gmres_preconditioner_flag = 0
       integer :: convergence_significant_figures = 2
-      real(dp) :: max_closed_channel_energy = 0.0_dp
-      integer :: max_channel_index = 0
    end type OptimizationData
-
-   type :: ScatteringData
-      real(dp) :: helium_mass = 0.0_dp
-      real(dp) :: incident_energy_mev = 0.0_dp
-      real(dp) :: theta_degrees = 0.0_dp
-      real(dp) :: phi_degrees = 0.0_dp
-   end type ScatteringData
 
    type :: PotentialData
       integer :: z_point_count = 0
@@ -42,10 +33,7 @@ module multiscat_core
       integer :: specular_component_index = 1
       integer :: fourier_grid_x_count = 0
       integer :: fourier_grid_y_count = 0
-      real(dp) :: unit_cell_ax = 0.0_dp
-      real(dp) :: unit_cell_ay = 0.0_dp
-      real(dp) :: unit_cell_bx = 0.0_dp
-      real(dp) :: unit_cell_by = 0.0_dp
+      type(UnitVectors) :: unit_vectors
       real(dp) :: z_min = 0.0_dp
       real(dp) :: z_max = 0.0_dp
       integer, allocatable :: fourier_indices_x(:)
@@ -82,7 +70,7 @@ contains
       type(OutputData) :: output_data
 
       integer :: n_z_points
-      integer :: m, i, j, alloc_status
+      integer :: m, i, j, nx, ny, alloc_status
 
       real(dp) :: eps
       real(dp) :: open_sum
@@ -93,12 +81,10 @@ contains
 
       real(dp), allocatable :: p(:), w(:), z(:)
       real(dp), allocatable :: t(:,:)
+      real(dp), allocatable :: perpendicular_momentum(:,:)
 
-      allocate(a(nmax), b(nmax), c(nmax), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (a, b, c).'
-
-      allocate(p(nmax), w(mmax), z(mmax), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (p, w, z).'
+      allocate(w(mmax), z(mmax), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (w, z).'
       allocate(t(mmax,mmax), stat=alloc_status)
       if (alloc_status /= 0) error stop 'ERROR: allocation failure (t).'
 
@@ -110,14 +96,20 @@ contains
 
       call build_lobatto_t_matrix(potential_data%z_min,potential_data%z_max,m,w,z,t)
 
-      call populate_momentum_basis( &
-         basis_data, optimization_data%max_closed_channel_energy, optimization_data%max_channel_index, &
-         potential_data%unit_cell_ax, potential_data%unit_cell_ay, &
-         potential_data%unit_cell_bx, potential_data%unit_cell_by, &
-         scatt_conditions_data%helium_mass, scatt_conditions_data%incident_energy_mev, &
-         scatt_conditions_data%theta_degrees, scatt_conditions_data%phi_degrees &
+      nx = potential_data%fourier_grid_x_count
+      ny = potential_data%fourier_grid_y_count
+      allocate(perpendicular_momentum(nx, ny), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (perpendicular_momentum).'
+      call get_perpendicular_momentum( &
+         perpendicular_momentum, nx, ny, potential_data%unit_vectors, scatt_conditions_data &
          )
-      if (basis_data%channel_count > nmax) error stop 'ERROR: n too big!'
+
+      basis_data = perpendicular_momentum_as_legacy_data(perpendicular_momentum)
+
+      allocate(a(basis_data%channel_count), b(basis_data%channel_count), c(basis_data%channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (a, b, c).'
+      allocate(p(basis_data%channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (p).'
 
       do i = 1,basis_data%channel_count
          call compute_wave_terms (basis_data%channel_energy_z(i),a(i),b(i),c(i),potential_data%z_max)
@@ -162,6 +154,7 @@ contains
       if (allocated(b)) deallocate(b)
       if (allocated(c)) deallocate(c)
       if (allocated(p)) deallocate(p)
+      if (allocated(perpendicular_momentum)) deallocate(perpendicular_momentum)
       if (allocated(w)) deallocate(w)
       if (allocated(z)) deallocate(z)
       if (allocated(t)) deallocate(t)

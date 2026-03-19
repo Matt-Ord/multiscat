@@ -5,8 +5,6 @@ subroutine run_multiscat_fortran( &
    phi_degrees, &
    gmres_preconditioner_flag, &
    convergence_significant_figures, &
-   max_closed_channel_energy, &
-   max_channel_index, &
    nkx, &
    nky, &
    nz, &
@@ -30,7 +28,7 @@ subroutine run_multiscat_fortran( &
    )
    use, intrinsic :: iso_fortran_env, only: real64
    use multiscat_core, only: OptimizationData, ScatteringData, &
-      PotentialData, OutputData, calculate_output_data, nmax
+      PotentialData, OutputData, calculate_output_data
    implicit none
 
    integer, parameter :: dp = real64
@@ -41,8 +39,6 @@ subroutine run_multiscat_fortran( &
    real(dp), intent(in) :: phi_degrees
    integer, intent(in) :: gmres_preconditioner_flag
    integer, intent(in) :: convergence_significant_figures
-   real(dp), intent(in) :: max_closed_channel_energy
-   integer, intent(in) :: max_channel_index
    integer, intent(in) :: nkx
    integer, intent(in) :: nky
    integer, intent(in) :: nz
@@ -91,8 +87,7 @@ subroutine run_multiscat_fortran( &
    end if
 
    nfc = nkx * nky
-
-   if (max_channels .lt. nmax) then
+   if (max_channels .lt. nfc) then
       ierr = 2
       return
    end if
@@ -100,8 +95,6 @@ subroutine run_multiscat_fortran( &
    optimization_data%output_mode = 0
    optimization_data%gmres_preconditioner_flag = gmres_preconditioner_flag
    optimization_data%convergence_significant_figures = convergence_significant_figures
-   optimization_data%max_closed_channel_energy = max_closed_channel_energy
-   optimization_data%max_channel_index = max_channel_index
 
    scatt_conditions_data%helium_mass = helium_mass
    scatt_conditions_data%incident_energy_mev = incident_energy_mev
@@ -112,10 +105,10 @@ subroutine run_multiscat_fortran( &
    potential_data%fourier_component_count = nfc
    potential_data%fourier_grid_x_count = nkx
    potential_data%fourier_grid_y_count = nky
-   potential_data%unit_cell_ax = unit_cell_ax
-   potential_data%unit_cell_ay = unit_cell_ay
-   potential_data%unit_cell_bx = unit_cell_bx
-   potential_data%unit_cell_by = unit_cell_by
+   potential_data%unit_vectors%ax1 = unit_cell_ax
+   potential_data%unit_vectors%ay1 = unit_cell_ay
+   potential_data%unit_vectors%bx1 = unit_cell_bx
+   potential_data%unit_vectors%by1 = unit_cell_by
    potential_data%z_min = zmin
    potential_data%z_max = zmax
 

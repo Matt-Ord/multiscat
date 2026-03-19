@@ -8,8 +8,6 @@ def run_multiscat_fortran(
     phi_degrees: float,
     gmres_preconditioner_flag: int,
     convergence_significant_figures: int,
-    max_closed_channel_energy: float,
-    max_channel_index: int,
     nkx: int,
     nky: int,
     unit_cell_ax: float,
