@@ -16,7 +16,8 @@
         "**/*.pyf",
         "**/PKG-INFO",
         "tests/data/pot10001.in",
-        "cspell.json"
+        "cspell.json",
+        "*.npy"
     ],
     "useGitignore": true,
     "words": [
