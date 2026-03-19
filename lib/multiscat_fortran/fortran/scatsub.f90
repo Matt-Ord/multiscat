@@ -1,8 +1,8 @@
-      subroutine get_momentum_basis( &
-         n,nspecular_channel_index,ichannel_index_x,ichannel_index_y, &
-         dchannel_energy_z,dmax_closed_channel_energy,imax_channel_index &
-         )
-         implicit double precision (a-h,o-z)
+subroutine get_momentum_basis( &
+   n,nspecular_channel_index,ichannel_index_x,ichannel_index_y, &
+   dchannel_energy_z,dmax_closed_channel_energy,imax_channel_index &
+   )
+   implicit double precision (a-h,o-z)
 !
 ! calculate reciprocal lattice
 ! calculate d (z-component of energy of outgoing wave) for
@@ -28,51 +28,51 @@
 ! if d(i) < 0, channel open, possible diffraction spot
 ! if d(i) > 0, channel closed, no spot
 !
-         include 'multiscat.inc'
-         integer n, nspecular_channel_index, imax_channel_index
-         dimension dchannel_energy_z(nmax)
-         integer ichannel_index_x(nmax), ichannel_index_y(nmax)
+   include 'multiscat.inc'
+   integer n, nspecular_channel_index, imax_channel_index
+   dimension dchannel_energy_z(nmax)
+   integer ichannel_index_x(nmax), ichannel_index_y(nmax)
 
-         common /cells/ ax,ay,bx,by,ei,theta,phi,a0,gax,gay,gbx,gby
-         common /const/ hemass,rmlmda ! = 2m/h^2 !modified by Boyao on 6 Dec 2020
-         DATA   Pi /3.141592653589793d0/
+   common /cells/ ax,ay,bx,by,ei,theta,phi,a0,gax,gay,gbx,gby
+   common /const/ hemass,rmlmda ! = 2m/h^2 !modified by Boyao on 6 Dec 2020
+   DATA   Pi /3.141592653589793d0/
 
-         Auc=dabs(ax*by-ay*bx)
-         if (Auc .le. 0.0d0) error stop 'ERROR: unit cell area must be positive.'
-         RecUnit=2*Pi/Auc
-         gax =  by*RecUnit
-         gay = -bx*RecUnit
-         gbx = -ay*RecUnit
-         gby =  ax*RecUnit
+   Auc=dabs(ax*by-ay*bx)
+   if (Auc .le. 0.0d0) error stop 'ERROR: unit cell area must be positive.'
+   RecUnit=2*Pi/Auc
+   gax =  by*RecUnit
+   gay = -bx*RecUnit
+   gbx = -ay*RecUnit
+   gby =  ax*RecUnit
 
-         ered   = rmlmda*ei ! ered is just k_i^2
-         thetad = theta*pi/180.0d0
-         phid   = phi*pi/180.0d0
+   ered   = rmlmda*ei ! ered is just k_i^2
+   thetad = theta*pi/180.0d0
+   phid   = phi*pi/180.0d0
 
-         pkx = sqrt(ered)*sin(thetad)*cos(phid)
-         pky = sqrt(ered)*sin(thetad)*sin(phid)
+   pkx = sqrt(ered)*sin(thetad)*cos(phid)
+   pky = sqrt(ered)*sin(thetad)*sin(phid)
 
-      n=0
-      do i1 = -imax_channel_index,imax_channel_index
-         do i2 = -imax_channel_index,imax_channel_index
-            gx = gax*i1 + gbx*i2
-            gy = gay*i1 + gby*i2
-            eint = (pkx+gx)**2 + (pky+gy)**2
-            di = eint-ered
-            if (di.lt.dmax_closed_channel_energy) then 
-               n=n+1
-               if (n.le.nmax) then
-                  ichannel_index_x(n)=i1
-                  ichannel_index_y(n)=i2
-                  dchannel_energy_z(n)=di
-                  if ((i1.eq.0) .and. (i2.eq.0)) &
-     &               nspecular_channel_index=n
-               else
-                  error stop 'ERROR: n too big! (basis)'
+   n=0
+   do i1 = -imax_channel_index,imax_channel_index
+      do i2 = -imax_channel_index,imax_channel_index
+         gx = gax*i1 + gbx*i2
+         gy = gay*i1 + gby*i2
+         eint = (pkx+gx)**2 + (pky+gy)**2
+         di = eint-ered
+         if (di.lt.dmax_closed_channel_energy) then
+            n=n+1
+            if (n.le.nmax) then
+               ichannel_index_x(n)=i1
+               ichannel_index_y(n)=i2
+               dchannel_energy_z(n)=di
+               if ((i1.eq.0) .and. (i2.eq.0)) &
+               &               nspecular_channel_index=n
+            else
+               error stop 'ERROR: n too big! (basis)'
             end if
-            end if
-         end do
+         end if
       end do
+   end do
 
 
    return
