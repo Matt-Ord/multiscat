@@ -115,8 +115,8 @@ subroutine run_multiscat_fortran( &
   potential_data%unit_cell_ay = unit_cell_ay
   potential_data%unit_cell_bx = unit_cell_bx
   potential_data%unit_cell_by = unit_cell_by
-  potential_data%zmin = zmin
-  potential_data%zmax = zmax
+  potential_data%z_min = zmin
+  potential_data%z_max = zmax
 
   allocate( &
     potential_data%fourier_indices_x(nfc), &
