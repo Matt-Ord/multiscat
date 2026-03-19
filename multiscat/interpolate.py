@@ -76,14 +76,16 @@ def interpolate_potential[
     # We interpolate the potential to the new lobatto points in the z direction
     # using np.interp.
     interpolated = np.apply_along_axis(
-        lambda d: np.interp(
-            metadata.children[2].values,
-            old_state_metadata.children[2].values,
-            d,
-        )
-        # TODO: We need to add weights to a general LabelledMetadata  # noqa: FIX002
-        # if they are not EvenlySpaced
-        * metadata.children[2].basis_weights,
+        lambda d: (
+            np.interp(
+                metadata.children[2].values,
+                old_state_metadata.children[2].values,
+                d,
+            )
+            # TODO: We need to add weights to a general LabelledMetadata  # noqa: FIX002
+            # if they are not EvenlySpaced
+            * metadata.children[2].basis_weights
+        ),
         2,
         converted.raw_data.reshape(old_state_metadata.shape),
     )
