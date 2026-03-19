@@ -220,7 +220,8 @@ c
 c
          integer j,k,l,m,n,ii,nm,ierr
          double precision d(n),e(n),z(nm,n)
-         double precision c,c2,c3,dl1,el1,f,g,h,p,r,s,s2,tst1,tst2,pythag
+         double precision c,c2,c3,dl1,el1,f,g,h,p,r,s,s2,tst1,
+     1   tst2,pythag
 c
 c     this subroutine is a translation of the algol procedure tql2,
 c     num. math. 11, 293-306(1968) by bowdler, martin, reinsch, and
