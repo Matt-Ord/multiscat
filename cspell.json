@@ -78,7 +78,9 @@
         "wolken",
         "wyatt",
         "xlabel",
-        "ylabel"
+        "ylabel",
+        "cpptools",
+        "pyright"
     ],
     "flagWords": [
         "hte",
