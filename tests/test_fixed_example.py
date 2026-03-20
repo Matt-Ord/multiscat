@@ -27,7 +27,7 @@ from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
     _get_parallel_kinetic_energy,  # pyright: ignore[reportPrivateUsage]
     _get_perpendicular_kinetic_difference,  # pyright: ignore[reportPrivateUsage]
-    run_multiscat,
+    get_scattering_matrix,
 )
 
 if TYPE_CHECKING:
@@ -71,6 +71,10 @@ def _parse_raw_intensities(output_file: Path) -> dict[tuple[int, int], float]:
                 intensities[(h, k)] = val
 
     return intensities
+
+
+def _fft_mode_to_index(mode: int, n: int) -> int:
+    return mode if mode >= 0 else n + mode
 
 
 def _raw_potential_in_input_file_convention(
@@ -130,26 +134,31 @@ def _simple_example_condition() -> tuple[
 def test_simple_system() -> None:
 
     condition, config = _simple_example_condition()
-    intensities = run_multiscat(condition, config)
+    s_matrix = get_scattering_matrix(condition, config)
+    intensities = np.real_if_close(s_matrix.as_array())
+    nx, ny = intensities.shape
 
-    if not intensities:
+    if intensities.size == 0:
         msg = "Expected at least one diffraction intensity"
         raise AssertionError(msg)
 
-    if not math.isclose(sum(intensities.values()), 1.0, abs_tol=1e-6):
-        msg = f"Intensities sum to {sum(intensities.values())}, expected 1.0"
+    if not math.isclose((np.sum(intensities)), 1.0, abs_tol=1e-6):
+        msg = f"Intensities sum to {(np.sum(intensities))}, expected 1.0"
         raise AssertionError(msg)
 
     expected_from_file = _parse_raw_intensities(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
     )
     for spot, expected_value in expected_from_file.items():
-        if spot not in intensities:
+        hx, ky = spot
+        ix = _fft_mode_to_index(hx, nx)
+        iy = _fft_mode_to_index(ky, ny)
+        if not (0 <= ix < nx and 0 <= iy < ny):
             msg = f"Missing diffraction spot {spot}"
             raise AssertionError(msg)
-        if not math.isclose(intensities[spot], expected_value, abs_tol=5e-5):
+        if not math.isclose(float(intensities[ix, iy]), expected_value, abs_tol=5e-5):
             msg = (
-                f"Intensity for spot {spot} is {intensities[spot]},"
+                f"Intensity for spot {spot} is {float(intensities[ix, iy])},"
                 f" expected {expected_value}"
             )
             raise AssertionError(msg)
@@ -203,26 +212,31 @@ def _rotated_example_condition() -> tuple[
 def test_rotated_system() -> None:
 
     condition, config = _rotated_example_condition()
-    intensities = run_multiscat(condition, config)
+    s_matrix = get_scattering_matrix(condition, config)
+    intensities = np.real_if_close(s_matrix.as_array())
+    nx, ny = intensities.shape
 
-    if not intensities:
+    if intensities.size == 0:
         msg = "Expected at least one diffraction intensity"
         raise AssertionError(msg)
 
-    if not math.isclose(sum(intensities.values()), 1.0, abs_tol=1e-6):
-        msg = f"Intensities sum to {sum(intensities.values())}, expected 1.0"
+    if not math.isclose((np.sum(intensities)), 1.0, abs_tol=1e-6):
+        msg = f"Intensities sum to {(np.sum(intensities))}, expected 1.0"
         raise AssertionError(msg)
 
     expected_from_file = _parse_raw_intensities(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
     )
     for spot, expected_value in expected_from_file.items():
-        if spot not in intensities:
+        hx, ky = spot
+        ix = _fft_mode_to_index(hx, nx)
+        iy = _fft_mode_to_index(ky, ny)
+        if not (0 <= ix < nx and 0 <= iy < ny):
             msg = f"Missing diffraction spot {spot}"
             raise AssertionError(msg)
-        if not math.isclose(intensities[spot], expected_value, abs_tol=5e-5):
+        if not math.isclose(float(intensities[ix, iy]), expected_value, abs_tol=5e-5):
             msg = (
-                f"Intensity for spot {spot} is {intensities[spot]},"
+                f"Intensity for spot {spot} is {float(intensities[ix, iy])},"
                 f" expected {expected_value}"
             )
             raise AssertionError(msg)
