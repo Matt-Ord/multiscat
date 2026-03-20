@@ -42,5 +42,22 @@ python module _multiscat_f2py
             double precision dimension(nx, ny), intent(out) :: perpendicular_kinetic_difference
             integer intent(out) :: ierr
         end subroutine get_perpendicular_kinetic_difference
+
+        subroutine get_parallel_kinetic_energy(zmin, zmax, nz, parallel_kinetic_energy, ierr)
+            double precision intent(in) :: zmin
+            double precision intent(in) :: zmax
+            integer intent(in) :: nz
+            double precision dimension(nz, nz), intent(out) :: parallel_kinetic_energy
+            integer intent(out) :: ierr
+        end subroutine get_parallel_kinetic_energy
+
+        subroutine get_lobatto_weights(zmin, zmax, node_count, w, x, ierr)
+            double precision intent(in) :: zmin
+            double precision intent(in) :: zmax
+            integer intent(in) :: node_count
+            double precision dimension(node_count), intent(out) :: w
+            double precision dimension(node_count), intent(out) :: x
+            integer intent(out) :: ierr
+        end subroutine get_lobatto_weights
     end interface
 end python module _multiscat_f2py

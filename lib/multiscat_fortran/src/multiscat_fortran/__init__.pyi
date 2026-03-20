@@ -42,5 +42,20 @@ def get_perpendicular_kinetic_difference(
     unit_cell_bx: float,
     unit_cell_by: float,
 ) -> tuple[NDArray[np.float64], int]: ...
+def get_parallel_kinetic_energy(
+    zmin: float,
+    zmax: float,
+    nz: int,
+) -> tuple[NDArray[np.float64], int]: ...
+def get_lobatto_weights(
+    zmin: float,
+    zmax: float,
+    node_count: int,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], int]: ...
 
-__all__ = ["run_multiscat_fortran", "get_perpendicular_kinetic_difference"]
+__all__ = [
+    "run_multiscat_fortran",
+    "get_perpendicular_kinetic_difference",
+    "get_parallel_kinetic_energy",
+    "get_lobatto_weights",
+]

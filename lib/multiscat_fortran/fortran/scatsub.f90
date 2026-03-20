@@ -4,7 +4,6 @@ module scatsub_basis
    private
 
    integer, parameter :: dp = real64
-   integer, parameter :: mmax = 550
 
    public :: UnitVectors
    public :: ReciprocalVectors
@@ -13,7 +12,8 @@ module scatsub_basis
    public :: build_reciprocal_vectors
    public :: get_perpendicular_kinetic_difference
    public :: perpendicular_momentum_as_legacy_data
-   public :: build_lobatto_t_matrix
+   public :: get_lobatto_weights
+   public :: get_parallel_kinetic_energy
    public :: compute_wave_terms
 
    type :: UnitVectors
@@ -135,7 +135,22 @@ contains
       ig = i0
       if (i0 .gt. ((n - 1) / 2)) ig = i0 - n
    end function fft_mode_index
-   subroutine build_lobatto_t_matrix (z_min,z_max,n_z_points,w,x,t)
+
+   subroutine get_lobatto_weights(z_min, z_max, node_count, w, x)
+      implicit none
+      real(dp), intent(in) :: z_min, z_max
+      integer, intent(in) :: node_count
+      real(dp), intent(out) :: w(node_count), x(node_count)
+      integer :: i
+
+      call compute_lobatto_rule(z_min, z_max, node_count, w, x)
+
+      do i = 1,node_count
+         w(i) = sqrt(w(i))
+      end do
+   end subroutine get_lobatto_weights
+
+   subroutine get_parallel_kinetic_energy (z_min,z_max,n_z_points,t)
       implicit none
 !
 ! -----------------------------------------------------------------
@@ -153,25 +168,18 @@ contains
 !
       real(dp), intent(in) :: z_min, z_max
       integer, intent(in) :: n_z_points
-      real(dp), intent(out) :: w(n_z_points),x(n_z_points),t(n_z_points,n_z_points)
+      real(dp), intent(out) :: t(n_z_points,n_z_points)
       integer :: alloc_status
       integer :: n, i, j, k
       real(dp) :: ff, gg, hh
 
-      real(dp), allocatable :: ww(:), xx(:), tt(:,:)
-      if (n_z_points .gt. mmax) error stop 'tshape 1'
-
+      real(dp), allocatable :: w(:), x(:), tt(:,:)
 ! I think, that this is needed for the sum defined in Lsf to work
       n = n_z_points+1
-      allocate(ww(n), xx(n), tt(n,n), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (ww, xx, tt).'
+      allocate(w(n), x(n), tt(n,n), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (w, x, tt).'
 ! Get points and weights for n point Lobatto quadrature in (z_min,z_max)
-      call compute_lobatto_rule (z_min,z_max,n,ww,xx)
-
-! No idea why it's done
-      do i = 1,n
-         ww(i) = sqrt(ww(i))
-      end do
+      call get_lobatto_weights(z_min, z_max, n, w, x)
 
       do i = 1,n
          ff = 0.0d0
@@ -182,7 +190,7 @@ contains
 ! gg will be value of derivative of j-th Lsf at
 ! i-th root, which is: i-th Lsf evaluated at j-th
 ! root divided by ( i-th root minus j-th root )
-            gg = 1.0d0/(xx(i)-xx(j))
+            gg = 1.0d0/(x(i)-x(j))
             ff = ff+gg
 
             do k = 1,n
@@ -190,14 +198,14 @@ contains
 ! This loop multiplies gg defined above by j-th Lsf
 ! evaluated at i-th root, which is itself a Lagrangian interpolation
                if (k.eq.j .or. k.eq.i) cycle
-               gg = gg*(xx(j)-xx(k))/(xx(i)-xx(k))
+               gg = gg*(x(j)-x(k))/(x(i)-x(k))
 
             end do
 
 ! Write into tt value of derivative of j-th Lsf
 ! evaluated at i-th root. This relation is described in the paper mentioned
 
-            tt(j,i) = ww(j)*gg/ww(i)
+            tt(j,i) = w(j)*gg/w(i)
 ! this appears wrong going by the given paper
 
          end do
@@ -210,9 +218,6 @@ contains
 ! 2: last root ( 0 ) doesn't get included in calculations
 ! but subroutine lobatto returns roots and weights in
 ! increasing order so this has to be done manually
-         w(i) = ww(i+1)
-         x(i) = xx(i+1)
-
          do j = 1,i
 
             hh = 0.0d0
@@ -233,11 +238,11 @@ contains
          end do
 
       end do
-      if (allocated(ww)) deallocate(ww)
-      if (allocated(xx)) deallocate(xx)
+      if (allocated(w)) deallocate(w)
+      if (allocated(x)) deallocate(x)
       if (allocated(tt)) deallocate(tt)
       return
-   end subroutine build_lobatto_t_matrix
+   end subroutine get_parallel_kinetic_energy
 
 
    subroutine compute_lobatto_rule (interval_min,interval_max,node_count,w,x)

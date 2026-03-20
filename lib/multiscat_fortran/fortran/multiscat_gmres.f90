@@ -69,7 +69,6 @@ subroutine build_preconditioner (n_z_points,channel_count, &
    use, intrinsic :: iso_fortran_env, only: real64
    implicit none
    integer, parameter :: dp = real64
-   integer, parameter :: mmax = 550
    integer, intent(in) :: n_z_points, channel_count
    integer, intent(in) :: n_fourier_components, specular_fourier_component_index
 !
@@ -85,12 +84,12 @@ subroutine build_preconditioner (n_z_points,channel_count, &
    real(dp), intent(out) :: eigenvalues(n_z_points)
    real(dp), intent(out) :: preconditioner_factors(n_z_points,channel_count)
    real(dp), intent(inout) :: kinetic_matrix(n_z_points,n_z_points)
-   real(dp) :: g(mmax)
-   integer :: i, j, k, ierr
+   real(dp), allocatable :: g(:)
+   integer :: i, j, k, ierr, alloc_status
    external :: rs
 
-! if m exceeds maximum size of m program terminates printing out precon 1
-   if (n_z_points .gt. mmax) error stop 'precon 1'
+   allocate(g(n_z_points), stat=alloc_status)
+   if (alloc_status /= 0) error stop 'ERROR: allocation failure (g).'
 !
    do k = 1,n_z_points
 ! real(x,kind=dp) transforms input into dp real
@@ -124,6 +123,7 @@ subroutine build_preconditioner (n_z_points,channel_count, &
       enddo
 
    enddo
+   if (allocated(g)) deallocate(g)
    return
 end subroutine build_preconditioner
 
@@ -418,7 +418,6 @@ subroutine solve_lower_block (state_vector,n_z_points, &
    use, intrinsic :: iso_fortran_env, only: real64
    implicit none
    integer, parameter :: dp = real64
-   integer, parameter :: mmax = 550
 !
 ! ----------------------------------------------------------
 ! This subroutine solves the block lower triangular
@@ -439,9 +438,7 @@ subroutine solve_lower_block (state_vector,n_z_points, &
    integer :: i, j, k, l
 !
 
-!parameter (mmax = 200)
-   complex(dp) y(mmax), fac
-   if (n_z_points .gt. mmax) error stop 'lower 1'
+   complex(dp) y(n_z_points), fac
 !
    do j = 1,channel_count
       do i = 1,j-1

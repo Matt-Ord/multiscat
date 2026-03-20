@@ -2,17 +2,12 @@ module multiscat_core
    use, intrinsic :: iso_fortran_env, only: real64
    use scatsub_basis, only: UnitVectors, IncidentWaveData, ChannelBasisData, &
       get_perpendicular_kinetic_difference, &
-      perpendicular_momentum_as_legacy_data, build_lobatto_t_matrix, compute_wave_terms
+      perpendicular_momentum_as_legacy_data, get_parallel_kinetic_energy, &
+      get_lobatto_weights, compute_wave_terms
    implicit none
    private
 
    integer, parameter :: dp = real64
-
-   integer, parameter :: NZFIXED_MAX = 550
-   integer, parameter :: NVFCFIXED_MAX = 4096
-   integer, parameter, public :: nmax = 1024
-   integer, parameter :: mmax = 550
-   integer, parameter :: n_fourier_components_x = 4096
 
    public :: OptimizationData
    public :: IncidentWaveData
@@ -69,61 +64,62 @@ contains
       type(IncidentWaveData), intent(in) :: incident_wave_data
       type(PotentialData), intent(in) :: potential_data
       type(OutputData) :: output_data
+      type(ChannelBasisData) :: basis_data
 
       integer :: n_z_points
-      integer :: m, i, j, nx, ny, alloc_status
+      integer :: j, nx, ny, alloc_status
 
       real(dp) :: eps
       real(dp) :: open_sum
 
-      complex(dp), allocatable :: a(:), b(:), c(:)
+      complex(dp), allocatable :: wave_a(:), wave_b(:), wave_c(:)
 
-      type(ChannelBasisData) :: basis_data
-
-      real(dp), allocatable :: p(:), w(:), z(:)
-      real(dp), allocatable :: t(:,:)
-      real(dp), allocatable :: perpendicular_momentum(:,:)
-
-      allocate(w(mmax), z(mmax), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (w, z).'
-      allocate(t(mmax,mmax), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (t).'
+      real(dp), allocatable :: channel_intensity(:)
+      real(dp), allocatable :: lobatto_weights(:), lobatto_points(:)
+      real(dp), allocatable :: parallel_kinetic_energy(:,:)
+      real(dp), allocatable :: perpendicular_kinetic_difference(:,:)
 
       eps = 0.5_dp*(10.0_dp**(-optimization_data%convergence_significant_figures))
       n_z_points = potential_data%z_point_count
 
-      m = n_z_points
-      if (m > mmax) error stop 'ERROR: m too big!'
-
-      call build_lobatto_t_matrix(potential_data%z_min,potential_data%z_max,m,w,z,t)
+      allocate(parallel_kinetic_energy(n_z_points,n_z_points), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (parallel_kinetic_energy).'
+      call get_parallel_kinetic_energy( &
+         potential_data%z_min, potential_data%z_max, n_z_points, parallel_kinetic_energy &
+         )
 
       nx = potential_data%fourier_grid_x_count
       ny = potential_data%fourier_grid_y_count
-      allocate(perpendicular_momentum(nx, ny), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (perpendicular_momentum).'
+      allocate(perpendicular_kinetic_difference(nx, ny), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (perpendicular_kinetic_difference).'
       call get_perpendicular_kinetic_difference( &
-         perpendicular_momentum, nx, ny, potential_data%unit_vectors, incident_wave_data &
+         perpendicular_kinetic_difference, nx, ny, potential_data%unit_vectors, incident_wave_data &
          )
 
-      basis_data = perpendicular_momentum_as_legacy_data(perpendicular_momentum)
+      basis_data = perpendicular_momentum_as_legacy_data(perpendicular_kinetic_difference)
 
-      allocate(a(basis_data%channel_count), b(basis_data%channel_count), c(basis_data%channel_count), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (a, b, c).'
-      allocate(p(basis_data%channel_count), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (p).'
+      allocate(wave_a(basis_data%channel_count), wave_b(basis_data%channel_count), &
+      & wave_c(basis_data%channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (wave_a, wave_b, wave_c).'
+      allocate(channel_intensity(basis_data%channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (channel_intensity).'
+      allocate(lobatto_weights(n_z_points + 1), lobatto_points(n_z_points + 1), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (lobatto_weights, lobatto_points).'
 
-      do i = 1,basis_data%channel_count
-         call compute_wave_terms (basis_data%channel_energy_z(i),a(i),b(i),c(i),potential_data%z_max)
-         b(i) = b(i)/w(m)
-         c(i) = c(i)/(w(m)**2)
-      end do
+      call get_bc_arrays( &
+         potential_data, basis_data, n_z_points, &
+         wave_a, wave_b, wave_c, lobatto_weights, lobatto_points &
+         )
 
-      call run_scattering_linear_step(optimization_data, potential_data, basis_data, m, a, b, c, p, t, eps)
+      call run_scattering_linear_step( &
+         optimization_data, potential_data, basis_data, n_z_points, &
+         wave_a, wave_b, wave_c, channel_intensity, parallel_kinetic_energy, eps &
+         )
 
       output_data%condition%channel_count = basis_data%channel_count
       output_data%condition%specular_channel_index = basis_data%specular_channel_index
-      output_data%condition%specular_intensity = p(basis_data%specular_channel_index)
-      output_data%condition%gmres_failed = (p(basis_data%specular_channel_index) < 0.0_dp)
+      output_data%condition%specular_intensity = channel_intensity(basis_data%specular_channel_index)
+      output_data%condition%gmres_failed = (channel_intensity(basis_data%specular_channel_index) < 0.0_dp)
 
       allocate(output_data%condition%channel_ix(basis_data%channel_count), stat=alloc_status)
       if (alloc_status /= 0) error stop 'ERROR: allocation failure (channel_ix).'
@@ -140,42 +136,69 @@ contains
       output_data%condition%channel_d(1:basis_data%channel_count) = &
          basis_data%channel_energy_z(1:basis_data%channel_count)
       output_data%condition%channel_intensity(1:basis_data%channel_count) = &
-         p(1:basis_data%channel_count)
+         channel_intensity(1:basis_data%channel_count)
 
       open_sum = 0.0_dp
       do j = 1,basis_data%channel_count
-         if (basis_data%channel_energy_z(j) < 0.0_dp) open_sum = open_sum + p(j)
+         if (basis_data%channel_energy_z(j) < 0.0_dp) open_sum = open_sum + channel_intensity(j)
       end do
       output_data%condition%open_channel_intensity_sum = open_sum
 
-      if (allocated(a)) deallocate(a)
-      if (allocated(b)) deallocate(b)
-      if (allocated(c)) deallocate(c)
-      if (allocated(p)) deallocate(p)
-      if (allocated(perpendicular_momentum)) deallocate(perpendicular_momentum)
-      if (allocated(w)) deallocate(w)
-      if (allocated(z)) deallocate(z)
-      if (allocated(t)) deallocate(t)
+      if (allocated(wave_a)) deallocate(wave_a)
+      if (allocated(wave_b)) deallocate(wave_b)
+      if (allocated(wave_c)) deallocate(wave_c)
+      if (allocated(channel_intensity)) deallocate(channel_intensity)
+      if (allocated(perpendicular_kinetic_difference)) deallocate(perpendicular_kinetic_difference)
+      if (allocated(lobatto_weights)) deallocate(lobatto_weights)
+      if (allocated(lobatto_points)) deallocate(lobatto_points)
+      if (allocated(parallel_kinetic_energy)) deallocate(parallel_kinetic_energy)
    end function calculate_output_data
 
-   subroutine run_scattering_linear_step(optimization_data, potential_data, basis_data, m, a, b, c, p, t, eps)
+   subroutine get_bc_arrays( &
+   & potential_data, basis_data, n_z_points, wave_a, wave_b, wave_c, &
+   & lobatto_weights, lobatto_points)
+      implicit none
+      type(PotentialData), intent(in) :: potential_data
+      type(ChannelBasisData), intent(in) :: basis_data
+      integer, intent(in) :: n_z_points
+      complex(dp), intent(out) :: wave_a(:), wave_b(:), wave_c(:)
+      real(dp), intent(inout) :: lobatto_weights(:), lobatto_points(:)
+
+      integer :: i
+      call get_lobatto_weights( &
+         potential_data%z_min, potential_data%z_max, n_z_points + 1, lobatto_weights, lobatto_points &
+         )
+
+      do i = 1,basis_data%channel_count
+         call compute_wave_terms( &
+            basis_data%channel_energy_z(i), wave_a(i), wave_b(i), wave_c(i), potential_data%z_max &
+            )
+         wave_b(i) = wave_b(i)/lobatto_weights(n_z_points + 1)
+         wave_c(i) = wave_c(i)/(lobatto_weights(n_z_points + 1)**2)
+      end do
+   end subroutine get_bc_arrays
+
+   subroutine run_scattering_linear_step( &
+   & optimization_data, potential_data, basis_data, n_z_points, wave_a, wave_b, &
+   & wave_c, channel_intensity, parallel_kinetic_energy, eps)
       implicit none
       type(OptimizationData), intent(in) :: optimization_data
       type(PotentialData), intent(in) :: potential_data
       type(ChannelBasisData), intent(in) :: basis_data
-      integer, intent(in) :: m
-      complex(dp), intent(in) :: a(:), b(:), c(:)
-      real(dp), intent(out) :: p(:)
-      real(dp), intent(in) :: t(:,:)
+      integer, intent(in) :: n_z_points
+      complex(dp), intent(in) :: wave_a(:), wave_b(:), wave_c(:)
+      real(dp), intent(out) :: channel_intensity(:)
+      real(dp), intent(in) :: parallel_kinetic_energy(:,:)
       real(dp), intent(in) :: eps
 
       call run_preconditioned_gmres ( &
-         m, basis_data%channel_index_x, basis_data%channel_index_y, &
+         n_z_points, basis_data%channel_index_x, basis_data%channel_index_y, &
          basis_data%channel_count, basis_data%specular_channel_index, &
          potential_data%fixed_fourier_values, &
          potential_data%fourier_indices_x, potential_data%fourier_indices_y, &
          potential_data%fourier_component_count, potential_data%specular_component_index, &
-         a, b, c, basis_data%channel_energy_z, p, t, eps, optimization_data%gmres_preconditioner_flag &
+         wave_a, wave_b, wave_c, basis_data%channel_energy_z, channel_intensity, &
+      & parallel_kinetic_energy, eps, optimization_data%gmres_preconditioner_flag &
          )
    end subroutine run_scattering_linear_step
 
