@@ -1,85 +1,81 @@
-      subroutine get_momentum_basis(channel_count,specular_channel_index,
-     +                              channel_index_x,channel_index_y,
-     +                              channel_energy_z,
-     +                              max_closed_channel_energy,
-     +                              max_channel_index)
-      implicit double precision (a-h,o-z)
-c     
+      subroutine get_momentum_basis(n,nspecular_channel_index,ichannel_index_x,ichannel_index_y,dchannel_energy_z,dmax_closed_channel_energy,imax_channel_index)
+         implicit double precision (a-h,o-z)
+c
 c     calculate reciprocal lattice
-c     calculate d (z-component of energy of outgoing wave) for 
+c     calculate d (z-component of energy of outgoing wave) for
 c     each channel
-c     
-c     gax, gbx  = the unit vector of reciprocal lattice along symmetry 
+c
+c     gax, gbx  = the unit vector of reciprocal lattice along symmetry
 c     direction
-c     
+c
 c     gay, gby  = y components of unit vector of reciprocal lattice
 c     along symmetry direction 2
-c     
+c
 c     ax, ay  = first in-plane unit-cell vector components
 c     bx, by  = second in-plane unit-cell vector components
-c     
+c
 c
 c     For each scattered channel:
 c     ered = square of incident wavevector for the channel
-c     eint = squre of surface component of the wavevector for the 
+c     eint = squre of surface component of the wavevector for the
 c     channel
-c     
+c
 c     -d(i) = square of the z component of the wavevector for the channel
 c     energy conservation: ered = eint + (-d(i))
 c     if d(i) < 0, channel open, possible diffraction spot
 c     if d(i) > 0, channel closed, no spot
-c     
-      include 'multiscat.inc'
-      integer channel_count, specular_channel_index, max_channel_index
-      dimension channel_energy_z(nmax)
-      integer channel_index_x(nmax), channel_index_y(nmax)
-      
-      common /cells/ ax,ay,bx,by,ei,theta,phi,a0,gax,gay,gbx,gby
-      common /const/ hemass,rmlmda ! = 2m/h^2 !modified by Boyao on 6 Dec 2020
-      DATA   Pi /3.141592653589793d0/
+c
+         include 'multiscat.inc'
+         integer n, nspecular_channel_index, imax_channel_index
+         dimension dchannel_energy_z(nmax)
+         integer ichannel_index_x(nmax), ichannel_index_y(nmax)
 
-      Auc=dabs(ax*by-ay*bx)
-      if (Auc .le. 0.0d0) stop 'ERROR: unit cell area must be positive.'
-      RecUnit=2*Pi/Auc
-      gax =  by*RecUnit
-      gay = -bx*RecUnit
-      gbx = -ay*RecUnit
-      gby =  ax*RecUnit
+         common /cells/ ax,ay,bx,by,ei,theta,phi,a0,gax,gay,gbx,gby
+         common /const/ hemass,rmlmda ! = 2m/h^2 !modified by Boyao on 6 Dec 2020
+         DATA   Pi /3.141592653589793d0/
 
-      ered   = rmlmda*ei ! ered is just k_i^2
-      thetad = theta*pi/180.0d0
-      phid   = phi*pi/180.0d0 
+         Auc=dabs(ax*by-ay*bx)
+         if (Auc .le. 0.0d0) stop 'ERROR: unit cell area must be positive.'
+         RecUnit=2*Pi/Auc
+         gax =  by*RecUnit
+         gay = -bx*RecUnit
+         gbx = -ay*RecUnit
+         gby =  ax*RecUnit
 
-      pkx = sqrt(ered)*sin(thetad)*cos(phid)
-      pky = sqrt(ered)*sin(thetad)*sin(phid)
-      
-      channel_count=0
-      do i1 = -max_channel_index,max_channel_index
-         do i2 = -max_channel_index,max_channel_index
+         ered   = rmlmda*ei ! ered is just k_i^2
+         thetad = theta*pi/180.0d0
+         phid   = phi*pi/180.0d0
+
+         pkx = sqrt(ered)*sin(thetad)*cos(phid)
+         pky = sqrt(ered)*sin(thetad)*sin(phid)
+
+      n=0
+      do i1 = -imax_channel_index,imax_channel_index
+         do i2 = -imax_channel_index,imax_channel_index
             gx = gax*i1 + gbx*i2
             gy = gay*i1 + gby*i2
             eint = (pkx+gx)**2 + (pky+gy)**2
             di = eint-ered
-            if (di.lt.max_closed_channel_energy) then 
-               channel_count=channel_count+1
-               if (channel_count.le.nmax) then
-                  channel_index_x(channel_count)=i1
-                  channel_index_y(channel_count)=i2
-                  channel_energy_z(channel_count)=di
+            if (di.lt.dmax_closed_channel_energy) then 
+               n=n+1
+               if (n.le.nmax) then
+                  ichannel_index_x(n)=i1
+                  ichannel_index_y(n)=i2
+                  dchannel_energy_z(n)=di
                   if ((i1.eq.0) .and. (i2.eq.0))
-     +               specular_channel_index=channel_count
+     +               nspecular_channel_index=n
                else
                   stop 'ERROR: n too big! (basis)'
             end if
             end if
          end do
       end do
-      
-      
-      return
+
+
+         return
       end subroutine get_momentum_basis
-         
-      
+
+
       subroutine build_lobatto_t_matrix (a,b,m,w,x,t)
       implicit double precision (a-h,o-z)
       include 'multiscat.inc'
