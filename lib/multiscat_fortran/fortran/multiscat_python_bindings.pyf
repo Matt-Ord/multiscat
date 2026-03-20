@@ -1,6 +1,6 @@
 python module _multiscat_f2py
     interface
-        subroutine run_multiscat_fortran(helium_mass, incident_kx, incident_ky, incident_kz, gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by, zmin, zmax, potential_values, max_channels, channel_count, channel_ix, channel_iy, channel_d, channel_intensity, specular_intensity, open_channel_intensity_sum, gmres_failed, ierr)
+        subroutine run_multiscat_fortran(helium_mass, incident_kx, incident_ky, incident_kz, gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by, zmin, zmax, potential_values, channel_intensity_dense, gmres_failed, ierr)
             double precision intent(in) :: helium_mass
             double precision intent(in) :: incident_kx
             double precision intent(in) :: incident_ky
@@ -17,14 +17,7 @@ python module _multiscat_f2py
             double precision intent(in) :: zmin
             double precision intent(in) :: zmax
             complex*16 dimension(nz, nkx*nky), intent(in) :: potential_values
-            integer intent(in) :: max_channels
-            integer intent(out) :: channel_count
-            integer dimension(max_channels), intent(out) :: channel_ix
-            integer dimension(max_channels), intent(out) :: channel_iy
-            double precision dimension(max_channels), intent(out) :: channel_d
-            double precision dimension(max_channels), intent(out) :: channel_intensity
-            double precision intent(out) :: specular_intensity
-            double precision intent(out) :: open_channel_intensity_sum
+            double precision dimension(nkx, nky), intent(out) :: channel_intensity_dense
             integer intent(out) :: gmres_failed
             integer intent(out) :: ierr
         end subroutine run_multiscat_fortran
@@ -59,5 +52,18 @@ python module _multiscat_f2py
             double precision dimension(node_count), intent(out) :: x
             integer intent(out) :: ierr
         end subroutine get_lobatto_weights
+
+        subroutine get_abc_arrays(zmin, zmax, nx, ny, perpendicular_kinetic_difference, n_z_points, wave_a, wave_b, wave_c, ierr)
+            double precision intent(in) :: zmin
+            double precision intent(in) :: zmax
+            integer intent(in) :: nx
+            integer intent(in) :: ny
+            double precision dimension(nx, ny), intent(in) :: perpendicular_kinetic_difference
+            integer intent(in) :: n_z_points
+            complex*16 dimension(nx*ny), intent(out) :: wave_a
+            complex*16 dimension(nx*ny), intent(out) :: wave_b
+            complex*16 dimension(nx*ny), intent(out) :: wave_c
+            integer intent(out) :: ierr
+        end subroutine get_abc_arrays
     end interface
 end python module _multiscat_f2py
