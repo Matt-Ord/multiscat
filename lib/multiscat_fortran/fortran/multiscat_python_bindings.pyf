@@ -1,24 +1,18 @@
 python module _multiscat_f2py
     interface
-        subroutine run_multiscat_fortran(helium_mass, incident_kx, incident_ky, incident_kz, gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, unit_cell_ax, unit_cell_ay, unit_cell_bx, unit_cell_by, zmin, zmax, potential_values, channel_intensity_dense, gmres_failed, ierr)
-            double precision intent(in) :: helium_mass
-            double precision intent(in) :: incident_kx
-            double precision intent(in) :: incident_ky
-            double precision intent(in) :: incident_kz
+        subroutine run_multiscat_fortran(gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, potential_values, perpendicular_kinetic_difference, wave_a, wave_b, wave_c, parallel_kinetic_energy, channel_intensity_dense, ierr)
             integer intent(in) :: gmres_preconditioner_flag
             integer intent(in) :: convergence_significant_figures
             integer intent(in) :: nkx
             integer intent(in) :: nky
             integer intent(in) :: nz
-            double precision intent(in) :: unit_cell_ax
-            double precision intent(in) :: unit_cell_ay
-            double precision intent(in) :: unit_cell_bx
-            double precision intent(in) :: unit_cell_by
-            double precision intent(in) :: zmin
-            double precision intent(in) :: zmax
             complex*16 dimension(nz, nkx*nky), intent(in) :: potential_values
+            double precision dimension(nkx, nky), intent(in) :: perpendicular_kinetic_difference
+            complex*16 dimension(nkx*nky), intent(in) :: wave_a
+            complex*16 dimension(nkx*nky), intent(in) :: wave_b
+            complex*16 dimension(nkx*nky), intent(in) :: wave_c
+            double precision dimension(nz, nz), intent(in) :: parallel_kinetic_energy
             double precision dimension(nkx, nky), intent(out) :: channel_intensity_dense
-            integer intent(out) :: gmres_failed
             integer intent(out) :: ierr
         end subroutine run_multiscat_fortran
 

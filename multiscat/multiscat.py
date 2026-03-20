@@ -4,7 +4,12 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
-from multiscat_fortran import run_multiscat_fortran
+from multiscat_fortran import (
+    get_abc_arrays,
+    get_parallel_kinetic_energy,
+    get_perpendicular_kinetic_difference,
+    run_multiscat_fortran,
+)
 from scipy.constants import (  # type: ignore[import-untyped]
     angstrom,
     atomic_mass,
@@ -391,6 +396,7 @@ def run_multiscat(
     config: OptimizationConfig,
 ) -> dict[tuple[int, int], float]:
     """Run Multiscat through the f2py native binding and return intensities."""
+    hbarsq = 4.18020
     mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(condition)
     (
         gmres_preconditioner_flag,
@@ -409,22 +415,60 @@ def run_multiscat(
         potential_values,
     ) = _potential_parameters(condition.potential)
 
-    channel_intensity_dense, _gmres_failed, ierr = run_multiscat_fortran(
-        mass_amu,
+    perpendicular_kinetic_difference, ierr = get_perpendicular_kinetic_difference(
         incident_kx,
         incident_ky,
         incident_kz,
-        gmres_preconditioner_flag,
-        convergence_significant_figures,
-        nkx=nkx,
-        nky=nky,
+        nx=nkx,
+        ny=nky,
         unit_cell_ax=unit_cell_ax,
         unit_cell_ay=unit_cell_ay,
         unit_cell_bx=unit_cell_bx,
         unit_cell_by=unit_cell_by,
+    )
+    if ierr != 0:
+        msg = (
+            "Fortran get_perpendicular_kinetic_difference "
+            f"failed with error code {ierr}"
+        )
+        raise RuntimeError(msg)
+
+    parallel_kinetic_energy, ierr = get_parallel_kinetic_energy(
         zmin=zmin,
         zmax=zmax,
-        potential_values=potential_values,
+        nz=nz,
+    )
+    if ierr != 0:
+        msg = f"Fortran get_parallel_kinetic_energy failed with error code {ierr}"
+        raise RuntimeError(msg)
+
+    wave_a, wave_b, wave_c, ierr = get_abc_arrays(
+        zmin=zmin,
+        zmax=zmax,
+        nx=nkx,
+        ny=nky,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+        n_z_points=nz,
+    )
+    if ierr != 0:
+        msg = f"Fortran get_abc_arrays failed with error code {ierr}"
+        raise RuntimeError(msg)
+
+    scaled_potential_values = np.asfortranarray(
+        potential_values * ((2.0 * mass_amu) / hbarsq),
+    )
+
+    channel_intensity_dense, ierr = run_multiscat_fortran(
+        gmres_preconditioner_flag,
+        convergence_significant_figures,
+        nkx=nkx,
+        nky=nky,
+        potential_values=scaled_potential_values,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+        wave_a=wave_a,
+        wave_b=wave_b,
+        wave_c=wave_c,
+        parallel_kinetic_energy=parallel_kinetic_energy,
         nz=nz,
     )
 

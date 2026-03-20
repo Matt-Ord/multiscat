@@ -1,64 +1,46 @@
 subroutine run_multiscat_fortran( &
-   helium_mass, &
-   incident_kx, &
-   incident_ky, &
-   incident_kz, &
    gmres_preconditioner_flag, &
    convergence_significant_figures, &
    nkx, &
    nky, &
    nz, &
-   unit_cell_ax, &
-   unit_cell_ay, &
-   unit_cell_bx, &
-   unit_cell_by, &
-   zmin, &
-   zmax, &
    potential_values, &
+   perpendicular_kinetic_difference, &
+   wave_a, &
+   wave_b, &
+   wave_c, &
+   parallel_kinetic_energy, &
    channel_intensity_dense, &
-   gmres_failed, &
    ierr &
    )
    use, intrinsic :: iso_fortran_env, only: real64
-   use multiscat_core, only: OptimizationData, IncidentWaveData, &
-      PotentialData, OutputData, calculate_output_data
+   use multiscat_core, only: OptimizationData, PotentialData, run_scattering_linear_step
    implicit none
 
    integer, parameter :: dp = real64
 
-   real(dp), intent(in) :: helium_mass
-   real(dp), intent(in) :: incident_kx
-   real(dp), intent(in) :: incident_ky
-   real(dp), intent(in) :: incident_kz
    integer, intent(in) :: gmres_preconditioner_flag
    integer, intent(in) :: convergence_significant_figures
    integer, intent(in) :: nkx
    integer, intent(in) :: nky
    integer, intent(in) :: nz
-   real(dp), intent(in) :: unit_cell_ax
-   real(dp), intent(in) :: unit_cell_ay
-   real(dp), intent(in) :: unit_cell_bx
-   real(dp), intent(in) :: unit_cell_by
-   real(dp), intent(in) :: zmin
-   real(dp), intent(in) :: zmax
    complex(dp), intent(in) :: potential_values(nz, nkx * nky)
+   real(dp), intent(in) :: perpendicular_kinetic_difference(nkx, nky)
+   complex(dp), intent(in) :: wave_a(nkx * nky)
+   complex(dp), intent(in) :: wave_b(nkx * nky)
+   complex(dp), intent(in) :: wave_c(nkx * nky)
+   real(dp), intent(in) :: parallel_kinetic_energy(nz, nz)
    real(dp), intent(out) :: channel_intensity_dense(nkx, nky)
-   integer, intent(out) :: gmres_failed
    integer, intent(out) :: ierr
 
-   real(dp), parameter :: hbarsq = 4.18020_dp
-   real(dp) :: rmlmda
    integer :: nfc
-   integer :: i, j, idx, alloc_status
+   integer :: i, j, idx, alloc_status, specular_i, specular_j
 
    type(OptimizationData) :: optimization_data
-   type(IncidentWaveData) :: incident_wave_data
    type(PotentialData) :: potential_data
-   type(OutputData) :: output_data
 
    ierr = 0
    channel_intensity_dense = 0.0_dp
-   gmres_failed = 0
 
    if (nkx .le. 0 .or. nky .le. 0 .or. nz .le. 0) then
       ierr = 1
@@ -70,20 +52,10 @@ subroutine run_multiscat_fortran( &
    optimization_data%gmres_preconditioner_flag = gmres_preconditioner_flag
    optimization_data%convergence_significant_figures = convergence_significant_figures
 
-   incident_wave_data%incident_k(1) = incident_kx
-   incident_wave_data%incident_k(2) = incident_ky
-   incident_wave_data%incident_k(3) = incident_kz
-
    potential_data%z_point_count = nz
    potential_data%fourier_component_count = nfc
    potential_data%fourier_grid_x_count = nkx
    potential_data%fourier_grid_y_count = nky
-   potential_data%unit_vectors%ax1 = unit_cell_ax
-   potential_data%unit_vectors%ay1 = unit_cell_ay
-   potential_data%unit_vectors%bx1 = unit_cell_bx
-   potential_data%unit_vectors%by1 = unit_cell_by
-   potential_data%z_min = zmin
-   potential_data%z_max = zmax
 
    allocate( &
       potential_data%fourier_indices_x(nfc), &
@@ -126,15 +98,17 @@ subroutine run_multiscat_fortran( &
       end do
    end do
 
-   rmlmda = 2.0_dp * helium_mass / hbarsq
+   potential_data%fixed_fourier_values = potential_values
 
-   potential_data%fixed_fourier_values = potential_values * rmlmda
-   output_data = calculate_output_data(optimization_data, incident_wave_data, potential_data)
-   channel_intensity_dense(1:nkx, 1:nky) = output_data%condition%channel_intensity_dense(1:nkx, 1:nky)
-   if (output_data%condition%gmres_failed) then
-      gmres_failed = 1
-   else
-      gmres_failed = 0
+   call run_scattering_linear_step( &
+      optimization_data, potential_data, perpendicular_kinetic_difference, &
+      wave_a, wave_b, wave_c, channel_intensity_dense, parallel_kinetic_energy &
+      )
+
+   specular_i = ((potential_data%specular_component_index - 1) / nky) + 1
+   specular_j = mod(potential_data%specular_component_index - 1, nky) + 1
+   if (channel_intensity_dense(specular_i, specular_j) < 0.0_dp) then
+      ierr = 2
    end if
 
    if (allocated(potential_data%fourier_indices_x)) deallocate(potential_data%fourier_indices_x)
