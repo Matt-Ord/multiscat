@@ -304,11 +304,15 @@ def get_scattered_state[
     raise NotImplementedError(msg)
 
 
-def _condition_parameters(
+def _condition_parameters[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
     condition: ScatteringCondition[
-        EvenlySpacedLengthMetadata,
-        LobattoSpacedLengthMetadata,
-        AxisDirections,
+        M0,
+        M1,
+        E,
     ],
 ) -> tuple[float, float, float, float]:
     scattering_vector = np.asarray(condition.incident_k)
@@ -404,7 +408,7 @@ def _potential_parameters(
     )
 
 
-def get_scattering_matrix[
+def get_scattering_matrix_from_state[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
@@ -422,15 +426,22 @@ def get_scattering_matrix[
     )
 
 
-def run_multiscat(
+def get_scattering_matrix[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
     condition: ScatteringCondition[
-        EvenlySpacedLengthMetadata,
-        LobattoSpacedLengthMetadata,
-        AxisDirections,
+        M0,
+        M1,
+        E,
     ],
     config: OptimizationConfig,
-) -> dict[tuple[int, int], float]:
-    """Run Multiscat through the f2py native binding and return intensities."""
+) -> Array[
+    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
+    np.dtype[np.complex128],
+]:
+    """Run Multiscat through the f2py native binding."""
     mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(condition)
     (
         gmres_preconditioner_flag,
@@ -511,14 +522,8 @@ def run_multiscat(
         msg = f"Fortran run_multiscat_fortran failed with error code {ierr}"
         raise RuntimeError(msg)
 
-    def _fft_mode_index(i0: int, n: int) -> int:
-        return i0 if i0 <= ((n - 1) // 2) else i0 - n
-
-    intensities: dict[tuple[int, int], float] = {}
-    for i in range(nkx):
-        for j in range(nky):
-            # The native routine returns physically relevant channel intensities.
-            intensities[(_fft_mode_index(i, nkx), _fft_mode_index(j, nky))] = float(
-                channel_intensity_dense[i, j],
-            )
-    return intensities
+    metadata_x01, _ = split_scattering_metadata(condition.metadata)
+    return Array(
+        AsUpcast(basis.from_metadata(metadata_x01), metadata_x01),
+        channel_intensity_dense.astype(np.complex128),
+    )
