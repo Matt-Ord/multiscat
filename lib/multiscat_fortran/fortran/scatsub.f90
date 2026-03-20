@@ -12,6 +12,7 @@ module scatsub_basis
    public :: build_reciprocal_vectors
    public :: get_perpendicular_kinetic_difference
    public :: perpendicular_momentum_as_legacy_data
+   public :: get_abc_arrays
    public :: get_lobatto_weights
    public :: get_parallel_kinetic_energy
    public :: compute_wave_terms
@@ -149,6 +150,38 @@ contains
          w(i) = sqrt(w(i))
       end do
    end subroutine get_lobatto_weights
+
+   subroutine get_abc_arrays( &
+   & z_min, z_max, perpendicular_kinetic_difference, n_z_points, wave_a, wave_b, wave_c)
+      implicit none
+      real(dp), intent(in) :: z_min, z_max
+      real(dp), intent(in) :: perpendicular_kinetic_difference(:,:)
+      integer, intent(in) :: n_z_points
+      complex(dp), intent(out) :: wave_a(:), wave_b(:), wave_c(:)
+
+      integer :: i, j, idx, alloc_status
+      real(dp), allocatable :: lobatto_weights(:), lobatto_points(:)
+
+      allocate(lobatto_weights(n_z_points + 1), lobatto_points(n_z_points + 1), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (lobatto_weights, lobatto_points).'
+
+      call get_lobatto_weights(z_min, z_max, n_z_points + 1, lobatto_weights, lobatto_points)
+
+      idx = 0
+      do i = 1,size(perpendicular_kinetic_difference, 1)
+         do j = 1,size(perpendicular_kinetic_difference, 2)
+            idx = idx + 1
+            call compute_wave_terms( &
+               perpendicular_kinetic_difference(i, j), wave_a(idx), wave_b(idx), wave_c(idx), z_max &
+               )
+            wave_b(idx) = wave_b(idx)/lobatto_weights(n_z_points + 1)
+            wave_c(idx) = wave_c(idx)/(lobatto_weights(n_z_points + 1)**2)
+         end do
+      end do
+
+      if (allocated(lobatto_weights)) deallocate(lobatto_weights)
+      if (allocated(lobatto_points)) deallocate(lobatto_points)
+   end subroutine get_abc_arrays
 
    subroutine get_parallel_kinetic_energy (z_min,z_max,n_z_points,t)
       implicit none

@@ -17,17 +17,10 @@ def run_multiscat_fortran(
     zmin: float,
     zmax: float,
     potential_values: NDArray[np.complex128],
-    max_channels: int,
     *,
     nz: int,
 ) -> tuple[
-    int,
-    NDArray[np.int32],
-    NDArray[np.int32],
     NDArray[np.float64],
-    NDArray[np.float64],
-    float,
-    float,
     int,
     int,
 ]: ...
@@ -52,10 +45,21 @@ def get_lobatto_weights(
     zmax: float,
     node_count: int,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], int]: ...
+def get_abc_arrays(
+    zmin: float,
+    zmax: float,
+    nx: int,
+    ny: int,
+    perpendicular_kinetic_difference: NDArray[np.float64],
+    n_z_points: int,
+) -> tuple[
+    NDArray[np.complex128], NDArray[np.complex128], NDArray[np.complex128], int
+]: ...
 
 __all__ = [
     "run_multiscat_fortran",
     "get_perpendicular_kinetic_difference",
     "get_parallel_kinetic_energy",
     "get_lobatto_weights",
+    "get_abc_arrays",
 ]
