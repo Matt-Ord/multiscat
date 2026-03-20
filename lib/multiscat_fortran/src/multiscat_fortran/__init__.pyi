@@ -2,26 +2,20 @@ import numpy as np
 from numpy.typing import NDArray
 
 def run_multiscat_fortran(
-    helium_mass: float,
-    incident_kx: float,
-    incident_ky: float,
-    incident_kz: float,
     gmres_preconditioner_flag: int,
     convergence_significant_figures: int,
     nkx: int,
     nky: int,
-    unit_cell_ax: float,
-    unit_cell_ay: float,
-    unit_cell_bx: float,
-    unit_cell_by: float,
-    zmin: float,
-    zmax: float,
     potential_values: NDArray[np.complex128],
+    perpendicular_kinetic_difference: NDArray[np.float64],
+    wave_a: NDArray[np.complex128],
+    wave_b: NDArray[np.complex128],
+    wave_c: NDArray[np.complex128],
+    parallel_kinetic_energy: NDArray[np.float64],
     *,
     nz: int,
 ) -> tuple[
     NDArray[np.float64],
-    int,
     int,
 ]: ...
 def get_perpendicular_kinetic_difference(
