@@ -247,3 +247,66 @@ subroutine get_perpendicular_kinetic_difference( &
       incident_wave_data &
       )
 end subroutine get_perpendicular_kinetic_difference
+
+subroutine get_parallel_kinetic_energy( &
+   zmin, &
+   zmax, &
+   nz, &
+   parallel_kinetic_energy, &
+   ierr &
+   )
+   use, intrinsic :: iso_fortran_env, only: real64
+   use scatsub_basis, only: get_parallel_kinetic_energy_core => get_parallel_kinetic_energy
+   implicit none
+
+   integer, parameter :: dp = real64
+
+   real(dp), intent(in) :: zmin
+   real(dp), intent(in) :: zmax
+   integer, intent(in) :: nz
+   real(dp), intent(out) :: parallel_kinetic_energy(nz, nz)
+   integer, intent(out) :: ierr
+
+   ierr = 0
+   parallel_kinetic_energy = 0.0_dp
+
+   if (nz .le. 0) then
+      ierr = 1
+      return
+   end if
+
+   call get_parallel_kinetic_energy_core(zmin, zmax, nz, parallel_kinetic_energy)
+end subroutine get_parallel_kinetic_energy
+
+subroutine get_lobatto_weights( &
+   zmin, &
+   zmax, &
+   node_count, &
+   w, &
+   x, &
+   ierr &
+   )
+   use, intrinsic :: iso_fortran_env, only: real64
+   use scatsub_basis, only: get_lobatto_weights_core => get_lobatto_weights
+   implicit none
+
+   integer, parameter :: dp = real64
+
+   real(dp), intent(in) :: zmin
+   real(dp), intent(in) :: zmax
+   integer, intent(in) :: node_count
+   real(dp), intent(out) :: w(node_count)
+   real(dp), intent(out) :: x(node_count)
+   integer, intent(out) :: ierr
+
+   ierr = 0
+   w = 0.0_dp
+   x = 0.0_dp
+
+   if (node_count .le. 0) then
+      ierr = 1
+      return
+   end if
+
+   call get_lobatto_weights_core(zmin, zmax, node_count, w, x)
+end subroutine get_lobatto_weights
