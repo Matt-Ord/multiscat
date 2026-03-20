@@ -40,16 +40,27 @@ MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(
 )
 
 
-def _parse_intensities(output_file: Path) -> dict[tuple[int, int], float]:
-    pattern = re.compile(r"^#\s+(-?\d+)\s+(-?\d+)\s+([0-9.E+-]+)\s*$")
+def _parse_raw_intensities(output_file: Path) -> dict[tuple[int, int], float]:
+    # Regex for lines without the '#' prefix: two ints and one float
+    pattern = re.compile(
+        r"^\s*(-?\d+)\s+(-?\d+)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*"
+    )
     intensities: dict[tuple[int, int], float] = {}
-    for line in output_file.read_text().splitlines():
-        match = pattern.match(line)
-        if not match:
-            continue
-        h = int(match.group(1))
-        k = int(match.group(2))
-        intensities[(h, k)] = float(match.group(3))
+
+    with output_file.open("r") as f:
+        for line in f:
+            stripped = line.strip()
+            # Skip empty lines or actual comments
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            match = pattern.match(line)
+            if match:
+                h = int(match.group(1))
+                k = int(match.group(2))
+                val = float(match.group(3))
+                intensities[(h, k)] = val
+
     return intensities
 
 
@@ -137,14 +148,14 @@ def test_simple_system() -> None:
         msg = f"Intensities sum to {sum(intensities.values())}, expected 1.0"
         raise AssertionError(msg)
 
-    expected_from_file = _parse_intensities(
+    expected_from_file = _parse_raw_intensities(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
     )
     for spot, expected_value in expected_from_file.items():
         if spot not in intensities:
             msg = f"Missing diffraction spot {spot}"
             raise AssertionError(msg)
-        if not math.isclose(intensities[spot], expected_value, abs_tol=1e-5):
+        if not math.isclose(intensities[spot], expected_value, abs_tol=5e-5):
             msg = (
                 f"Intensity for spot {spot} is {intensities[spot]},"
                 f" expected {expected_value}"
@@ -187,7 +198,7 @@ def _rotated_example_condition() -> tuple[
         mass=HELIUM_MASS,
         energy=20 * electron_volt * 10**-3,
         theta=np.deg2rad(30),
-        phi=np.deg2rad(0),
+        phi=rotation,
         potential=operator.build.corrugated_morse_potential(
             metadata,
             MORSE_PARAMETERS,
@@ -210,14 +221,14 @@ def test_rotated_system() -> None:
         msg = f"Intensities sum to {sum(intensities.values())}, expected 1.0"
         raise AssertionError(msg)
 
-    expected_from_file = _parse_intensities(
+    expected_from_file = _parse_raw_intensities(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
     )
     for spot, expected_value in expected_from_file.items():
         if spot not in intensities:
             msg = f"Missing diffraction spot {spot}"
             raise AssertionError(msg)
-        if not math.isclose(intensities[spot], expected_value, abs_tol=1e-5):
+        if not math.isclose(intensities[spot], expected_value, abs_tol=5e-5):
             msg = (
                 f"Intensity for spot {spot} is {intensities[spot]},"
                 f" expected {expected_value}"

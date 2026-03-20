@@ -296,7 +296,7 @@ def _condition_parameters(
         raise ValueError(msg)
 
     mass_amu = float(condition.mass / atomic_mass)
-    energy_mev = float(condition.incident_energy / (electron_volt * 10**3))
+    energy_mev = float(condition.incident_energy / (electron_volt * 10**-3))
     theta_degrees = float(np.degrees(condition.theta))
     phi_degrees = float(np.degrees(condition.phi))
     return mass_amu, energy_mev, theta_degrees, phi_degrees
@@ -310,7 +310,7 @@ def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int, floa
     gmres_preconditioner_flag = 0
     convergence_significant_figures = int(np.log10(1 / config.precision))
     max_closed_channel_energy = (
-        float(config.max_negative_energy / (electron_volt * 10**3))
+        float(config.max_negative_energy / (electron_volt * 10**-3))
         if config.max_negative_energy is not None
         else 120.0
     )
