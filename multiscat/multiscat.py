@@ -432,19 +432,14 @@ def run_multiscat(
         msg = f"Fortran run_multiscat_fortran failed with error code {ierr}"
         raise RuntimeError(msg)
 
-    channel_d_dense = _get_perpendicular_kinetic_difference(
-        condition.incident_k,
-        condition.metadata,
-    ).reshape((nkx, nky))
-
     def _fft_mode_index(i0: int, n: int) -> int:
         return i0 if i0 <= ((n - 1) // 2) else i0 - n
 
     intensities: dict[tuple[int, int], float] = {}
     for i in range(nkx):
         for j in range(nky):
-            if channel_d_dense[i, j] < 0.0:
-                intensities[(_fft_mode_index(i, nkx), _fft_mode_index(j, nky))] = float(
-                    channel_intensity_dense[i, j],
-                )
+            # The native routine returns physically relevant channel intensities.
+            intensities[(_fft_mode_index(i, nkx), _fft_mode_index(j, nky))] = float(
+                channel_intensity_dense[i, j],
+            )
     return intensities
