@@ -14,11 +14,19 @@ from scipy.constants import (  # type: ignore[import-untyped]
     angstrom,
     atomic_mass,
     electron_volt,
+    hbar,
 )
-from slate_core import SimpleMetadata, TupleBasis, TupleMetadata, array
+from slate_core import (
+    Array,
+    Basis,
+    SimpleMetadata,
+    TupleBasis,
+    TupleMetadata,
+    array,
+    basis,
+)
 from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
-    PERIODIC_FEATURE,
     AxisDirections,
     EvenlySpacedLengthMetadata,
     LobattoSpacedLengthMetadata,
@@ -36,7 +44,10 @@ from multiscat.basis import (
     split_scattering_metadata,
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
-from multiscat.polynomial import get_barycentric_derivatives
+from multiscat.polynomial import (
+    get_barycentric_derivatives,
+    get_barycentric_kinetic_operator,
+)
 
 if TYPE_CHECKING:
     from multiscat.interpolate import ScatteringOperator
@@ -76,7 +87,7 @@ def _get_parallel_kinetic_energy[
     E: AxisDirections,
 ](
     metadata: ScatteringBasisMetadata[M0, M1, E],
-) -> np.ndarray[tuple[int, int], np.dtype[np.floating]]:
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """
     Get the matrix of parallel kinetic energies T.
 
@@ -88,16 +99,17 @@ def _get_parallel_kinetic_energy[
     # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
     # to calculate the kinetic matrix T_ij
     lobatto_metadata = metadata.children[2]
-    derivatives = get_barycentric_derivatives(lobatto_metadata)
+    get_barycentric_derivatives(lobatto_metadata)
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
-    # basis. Issue is that the array does not have and index for the perpendicular
-    # direction, so we cannot use existing ContractedBasis functionality
-    assert PERIODIC_FEATURE not in lobatto_metadata.features  # noqa: S101
-    return np.einsum(
-        "k,ik,jk->ij",
-        lobatto_metadata.basis_weights,
-        derivatives,
-        derivatives,
+    # basis. Issue is that this does not lend itself to an efficient
+    # implementation when we add the parallel and perpendicular
+    # kinetic energies together.
+    lobatto_metadata = metadata.children[2]
+    return array.as_fundamental_basis(
+        get_barycentric_kinetic_operator(lobatto_metadata),
+    ).raw_data.reshape(
+        lobatto_metadata.fundamental_size,
+        lobatto_metadata.fundamental_size,
     )
 
 
@@ -137,14 +149,19 @@ def get_kinetic_difference_operator[
     """Get the matrix of kinetic energies minus the incident energy."""
     # The parallel kinetic energy is the same for each bloch K, but is non-diagonal
     # in the lobatto basis
-    t_ij = _get_parallel_kinetic_energy(metadata)
-    # The perpendicular kinetic energy difference is diagonal in bloch K, and is
-    # the same for each lobatto basis function
+    t_jk = _get_parallel_kinetic_energy(metadata)
+    # The perpendicular kinetic energy difference is diagonal in both the bloch K,
+    # and the lobatto basis functions. Here we scale by the lobatto weights
     d_i = _get_perpendicular_kinetic_difference(incident_k, metadata)
+    d_ijk = np.einsum(
+        "i,jk->ijk",
+        d_i,
+        np.eye(t_jk.shape[0], dtype=np.complex128),
+    )
 
     # The resulting difference operator is diagonal in the two bloch K indices
     # and non-diagonal in the lobatto basis
-    data = t_ij[np.newaxis, :, :] + d_i[:, np.newaxis, np.newaxis]
+    data = t_jk[np.newaxis, :, :] + d_ijk
     return Operator(
         basis=_get_kinetic_difference_operator_basis(metadata),
         data=data.astype(np.complexfloating),
@@ -387,6 +404,24 @@ def _potential_parameters(
     )
 
 
+def get_scattering_matrix[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    state: State[CloseCouplingBasis[M0, M1, E]],
+) -> Array[
+    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
+    np.dtype[np.complexfloating],
+]:
+    """Get the scattering matrix for a given scattered state."""
+    metadata_x01, _ = split_scattering_metadata(state.basis.metadata())
+    return Array(
+        AsUpcast(basis.from_metadata(metadata_x01), metadata_x01),
+        state.as_array()[:, :, -1],
+    )
+
+
 def run_multiscat(
     condition: ScatteringCondition[
         EvenlySpacedLengthMetadata,
@@ -396,7 +431,6 @@ def run_multiscat(
     config: OptimizationConfig,
 ) -> dict[tuple[int, int], float]:
     """Run Multiscat through the f2py native binding and return intensities."""
-    hbarsq = 4.18020
     mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(condition)
     (
         gmres_preconditioner_flag,
@@ -454,8 +488,9 @@ def run_multiscat(
         msg = f"Fortran get_abc_arrays failed with error code {ierr}"
         raise RuntimeError(msg)
 
+    hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
     scaled_potential_values = np.asfortranarray(
-        potential_values * ((2.0 * mass_amu) / hbarsq),
+        potential_values * ((2.0 * mass_amu) / hbar_squared),
     )
 
     channel_intensity_dense, ierr = run_multiscat_fortran(

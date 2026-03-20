@@ -28,6 +28,7 @@
         "barycentric",
         "bloch",
         "cflags",
+        "clim",
         "cmdclass",
         "complexfloating",
         "cpptools",
