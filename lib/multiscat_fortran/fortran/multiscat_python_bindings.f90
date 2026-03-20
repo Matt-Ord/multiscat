@@ -15,14 +15,7 @@ subroutine run_multiscat_fortran( &
    zmin, &
    zmax, &
    potential_values, &
-   max_channels, &
-   channel_count, &
-   channel_ix, &
-   channel_iy, &
-   channel_d, &
-   channel_intensity, &
-   specular_intensity, &
-   open_channel_intensity_sum, &
+   channel_intensity_dense, &
    gmres_failed, &
    ierr &
    )
@@ -49,15 +42,7 @@ subroutine run_multiscat_fortran( &
    real(dp), intent(in) :: zmin
    real(dp), intent(in) :: zmax
    complex(dp), intent(in) :: potential_values(nz, nkx * nky)
-   integer, intent(in) :: max_channels
-
-   integer, intent(out) :: channel_count
-   integer, intent(out) :: channel_ix(max_channels)
-   integer, intent(out) :: channel_iy(max_channels)
-   real(dp), intent(out) :: channel_d(max_channels)
-   real(dp), intent(out) :: channel_intensity(max_channels)
-   real(dp), intent(out) :: specular_intensity
-   real(dp), intent(out) :: open_channel_intensity_sum
+   real(dp), intent(out) :: channel_intensity_dense(nkx, nky)
    integer, intent(out) :: gmres_failed
    integer, intent(out) :: ierr
 
@@ -72,13 +57,7 @@ subroutine run_multiscat_fortran( &
    type(OutputData) :: output_data
 
    ierr = 0
-   channel_count = 0
-   channel_ix = 0
-   channel_iy = 0
-   channel_d = 0.0_dp
-   channel_intensity = 0.0_dp
-   specular_intensity = 0.0_dp
-   open_channel_intensity_sum = 0.0_dp
+   channel_intensity_dense = 0.0_dp
    gmres_failed = 0
 
    if (nkx .le. 0 .or. nky .le. 0 .or. nz .le. 0) then
@@ -87,11 +66,6 @@ subroutine run_multiscat_fortran( &
    end if
 
    nfc = nkx * nky
-   if (max_channels .lt. nfc) then
-      ierr = 2
-      return
-   end if
-
    optimization_data%output_mode = 0
    optimization_data%gmres_preconditioner_flag = gmres_preconditioner_flag
    optimization_data%convergence_significant_figures = convergence_significant_figures
@@ -156,24 +130,7 @@ subroutine run_multiscat_fortran( &
 
    potential_data%fixed_fourier_values = potential_values * rmlmda
    output_data = calculate_output_data(optimization_data, incident_wave_data, potential_data)
-
-   channel_count = output_data%condition%channel_count
-   if (channel_count .gt. max_channels) then
-      ierr = 3
-      channel_count = 0
-      if (allocated(potential_data%fourier_indices_x)) deallocate(potential_data%fourier_indices_x)
-      if (allocated(potential_data%fourier_indices_y)) deallocate(potential_data%fourier_indices_y)
-      if (allocated(potential_data%fixed_fourier_values)) deallocate(potential_data%fixed_fourier_values)
-      return
-   end if
-
-   channel_ix(1:channel_count) = output_data%condition%channel_ix(1:channel_count)
-   channel_iy(1:channel_count) = output_data%condition%channel_iy(1:channel_count)
-   channel_d(1:channel_count) = output_data%condition%channel_d(1:channel_count)
-   channel_intensity(1:channel_count) = &
-      output_data%condition%channel_intensity(1:channel_count)
-   specular_intensity = output_data%condition%specular_intensity
-   open_channel_intensity_sum = output_data%condition%open_channel_intensity_sum
+   channel_intensity_dense(1:nkx, 1:nky) = output_data%condition%channel_intensity_dense(1:nkx, 1:nky)
    if (output_data%condition%gmres_failed) then
       gmres_failed = 1
    else
@@ -310,3 +267,47 @@ subroutine get_lobatto_weights( &
 
    call get_lobatto_weights_core(zmin, zmax, node_count, w, x)
 end subroutine get_lobatto_weights
+
+subroutine get_abc_arrays( &
+   zmin, &
+   zmax, &
+   nx, &
+   ny, &
+   perpendicular_kinetic_difference, &
+   n_z_points, &
+   wave_a, &
+   wave_b, &
+   wave_c, &
+   ierr &
+   )
+   use, intrinsic :: iso_fortran_env, only: real64
+   use scatsub_basis, only: get_abc_arrays_core => get_abc_arrays
+   implicit none
+
+   integer, parameter :: dp = real64
+
+   real(dp), intent(in) :: zmin
+   real(dp), intent(in) :: zmax
+   integer, intent(in) :: nx
+   integer, intent(in) :: ny
+   real(dp), intent(in) :: perpendicular_kinetic_difference(nx, ny)
+   integer, intent(in) :: n_z_points
+   complex(dp), intent(out) :: wave_a(nx*ny)
+   complex(dp), intent(out) :: wave_b(nx*ny)
+   complex(dp), intent(out) :: wave_c(nx*ny)
+   integer, intent(out) :: ierr
+
+   ierr = 0
+   wave_a = (0.0_dp, 0.0_dp)
+   wave_b = (0.0_dp, 0.0_dp)
+   wave_c = (0.0_dp, 0.0_dp)
+
+   if (nx .le. 0 .or. ny .le. 0 .or. n_z_points .le. 0) then
+      ierr = 1
+      return
+   end if
+
+   call get_abc_arrays_core( &
+      zmin, zmax, perpendicular_kinetic_difference, n_z_points, wave_a, wave_b, wave_c &
+      )
+end subroutine get_abc_arrays

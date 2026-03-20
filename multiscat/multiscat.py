@@ -409,18 +409,7 @@ def run_multiscat(
         potential_values,
     ) = _potential_parameters(condition.potential)
 
-    max_channels = nkx * nky
-    (
-        channel_count,
-        channel_ix,
-        channel_iy,
-        channel_d,
-        channel_intensity,
-        _,
-        _,
-        _,
-        ierr,
-    ) = run_multiscat_fortran(
+    channel_intensity_dense, _gmres_failed, ierr = run_multiscat_fortran(
         mass_amu,
         incident_kx,
         incident_ky,
@@ -436,7 +425,6 @@ def run_multiscat(
         zmin=zmin,
         zmax=zmax,
         potential_values=potential_values,
-        max_channels=max_channels,
         nz=nz,
     )
 
@@ -444,10 +432,19 @@ def run_multiscat(
         msg = f"Fortran run_multiscat_fortran failed with error code {ierr}"
         raise RuntimeError(msg)
 
+    channel_d_dense = _get_perpendicular_kinetic_difference(
+        condition.incident_k,
+        condition.metadata,
+    ).reshape((nkx, nky))
+
+    def _fft_mode_index(i0: int, n: int) -> int:
+        return i0 if i0 <= ((n - 1) // 2) else i0 - n
+
     intensities: dict[tuple[int, int], float] = {}
-    for idx in range(int(channel_count)):
-        if channel_d[idx] < 0.0:
-            intensities[(int(channel_ix[idx]), int(channel_iy[idx]))] = float(
-                channel_intensity[idx],
-            )
+    for i in range(nkx):
+        for j in range(nky):
+            if channel_d_dense[i, j] < 0.0:
+                intensities[(_fft_mode_index(i, nkx), _fft_mode_index(j, nky))] = float(
+                    channel_intensity_dense[i, j],
+                )
     return intensities
