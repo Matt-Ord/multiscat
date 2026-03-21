@@ -3,10 +3,10 @@ python module _multiscat_f2py
         subroutine run_multiscat_fortran(gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, potential_values, perpendicular_kinetic_difference, wave_a, wave_b, wave_c, parallel_kinetic_energy, channel_intensity_dense, ierr)
             integer intent(in) :: gmres_preconditioner_flag
             integer intent(in) :: convergence_significant_figures
-            integer intent(in) :: nkx
-            integer intent(in) :: nky
-            integer intent(in) :: nz
-            complex*16 dimension(nz, nkx*nky), intent(in) :: potential_values
+            integer intent(hide), depend(potential_values) :: nkx = shape(potential_values, 0)
+            integer intent(hide), depend(potential_values) :: nky = shape(potential_values, 1)
+            integer intent(hide), depend(potential_values) :: nz = shape(potential_values, 2)
+            complex*16 dimension(nkx, nky, nz), intent(in) :: potential_values
             double precision dimension(nkx, nky), intent(in) :: perpendicular_kinetic_difference
             complex*16 dimension(nkx*nky), intent(in) :: wave_a
             complex*16 dimension(nkx*nky), intent(in) :: wave_b

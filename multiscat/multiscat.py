@@ -374,7 +374,7 @@ def _potential_parameters(
     float,
     float,
     float,
-    np.ndarray[Any, np.dtype[np.complex128]],
+    np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
 ]:
     potential_lobatto = _raw_potential_in_input_file_convention(potential)
     metadata = potential.basis.metadata().children[0]
@@ -392,8 +392,7 @@ def _potential_parameters(
     bx_angstrom = float(y_vector[0] / angstrom)
     by_angstrom = float(y_vector[1] / angstrom)
 
-    nfc = nx * ny
-    potential_matrix = np.asfortranarray(potential_lobatto.reshape((nfc, nz)).T)
+    potential_dense = np.asfortranarray(potential_lobatto.reshape((nx, ny, nz)))
     return (
         int(nx),
         int(ny),
@@ -404,7 +403,7 @@ def _potential_parameters(
         by_angstrom,
         z_start_angstrom,
         z_end_angstrom,
-        potential_matrix,
+        potential_dense,
     )
 
 
@@ -504,19 +503,21 @@ def get_scattering_matrix[
         potential_values * ((2.0 * mass_amu) / hbar_squared),
     )
 
-    channel_intensity_dense, ierr = run_multiscat_fortran(
-        gmres_preconditioner_flag,
-        convergence_significant_figures,
-        nkx=nkx,
-        nky=nky,
-        potential_values=scaled_potential_values,
-        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-        wave_a=wave_a,
-        wave_b=wave_b,
-        wave_c=wave_c,
-        parallel_kinetic_energy=parallel_kinetic_energy,
-        nz=nz,
+    run_result = cast(
+        "tuple[np.ndarray[Any, np.dtype[np.floating]], int]",
+        run_multiscat_fortran(  # type: ignore[call-arg]
+            gmres_preconditioner_flag,
+            convergence_significant_figures,
+            potential_values=scaled_potential_values,
+            perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+            wave_a=wave_a,
+            wave_b=wave_b,
+            wave_c=wave_c,
+            parallel_kinetic_energy=parallel_kinetic_energy,
+        ),
     )
+    channel_intensity_dense = np.asarray(run_result[0], dtype=np.float64)
+    ierr = int(run_result[1])
 
     if ierr != 0:
         msg = f"Fortran run_multiscat_fortran failed with error code {ierr}"

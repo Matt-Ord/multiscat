@@ -123,7 +123,8 @@ Solving the closed coupled equations
 For local development and CI-like checks, use this dependency/test workflow:
 
 1. Always use `uv` to install dependencies.
-2. Before running tests, always force a reinstall to ensure a clean dependency state.
+2. `uv sync --all-extras --force-reinstall` also builds and installs the inner Fortran project in `lib/multiscat_fortran` (the f2py extension used by `multiscat`).
+3. Before running tests, always force a reinstall to ensure a clean dependency state.
 
 Example commands:
 

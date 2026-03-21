@@ -14,7 +14,7 @@ subroutine run_multiscat_fortran( &
    ierr &
    )
    use, intrinsic :: iso_fortran_env, only: real64
-   use multiscat_core, only: OptimizationData, PotentialData, run_scattering_linear_step
+   use multiscat_core, only: OptimizationData, run_scattering_linear_step
    implicit none
 
    integer, parameter :: dp = real64
@@ -24,7 +24,7 @@ subroutine run_multiscat_fortran( &
    integer, intent(in) :: nkx
    integer, intent(in) :: nky
    integer, intent(in) :: nz
-   complex(dp), intent(in) :: potential_values(nz, nkx * nky)
+   complex(dp), intent(in) :: potential_values(nkx, nky, nz)
    real(dp), intent(in) :: perpendicular_kinetic_difference(nkx, nky)
    complex(dp), intent(in) :: wave_a(nkx * nky)
    complex(dp), intent(in) :: wave_b(nkx * nky)
@@ -33,87 +33,33 @@ subroutine run_multiscat_fortran( &
    real(dp), intent(out) :: channel_intensity_dense(nkx, nky)
    integer, intent(out) :: ierr
 
-   integer :: nfc
-   integer :: i, j, idx, alloc_status, specular_i, specular_j
+   integer :: specular_i, specular_j
 
    type(OptimizationData) :: optimization_data
-   type(PotentialData) :: potential_data
 
    ierr = 0
-   channel_intensity_dense = 0.0_dp
 
    if (nkx .le. 0 .or. nky .le. 0 .or. nz .le. 0) then
       ierr = 1
       return
    end if
 
-   nfc = nkx * nky
+   channel_intensity_dense = 0.0_dp
+
    optimization_data%output_mode = 0
    optimization_data%gmres_preconditioner_flag = gmres_preconditioner_flag
    optimization_data%convergence_significant_figures = convergence_significant_figures
 
-   potential_data%z_point_count = nz
-   potential_data%fourier_component_count = nfc
-   potential_data%fourier_grid_x_count = nkx
-   potential_data%fourier_grid_y_count = nky
-
-   allocate( &
-      potential_data%fourier_indices_x(nfc), &
-      potential_data%fourier_indices_y(nfc) &
-      , stat=alloc_status)
-   if (alloc_status /= 0) then
-      ierr = 4
-      return
-   end if
-   allocate(potential_data%fixed_fourier_values(nz, nfc), stat=alloc_status)
-   if (alloc_status /= 0) then
-      ierr = 4
-      if (allocated(potential_data%fourier_indices_x)) deallocate(potential_data%fourier_indices_x)
-      if (allocated(potential_data%fourier_indices_y)) deallocate(potential_data%fourier_indices_y)
-      return
-   end if
-
-   idx = 0
-   potential_data%specular_component_index = 1
-   do i = 0, nkx - 1
-      do j = 0, nky - 1
-         idx = idx + 1
-
-         potential_data%fourier_indices_x(idx) = i
-         if (i .gt. ((nkx - 1) / 2)) then
-            potential_data%fourier_indices_x(idx) = i - nkx
-         end if
-
-         potential_data%fourier_indices_y(idx) = j
-         if (j .gt. ((nky - 1) / 2)) then
-            potential_data%fourier_indices_y(idx) = j - nky
-         end if
-
-         if ( &
-            potential_data%fourier_indices_x(idx) .eq. 0 .and. &
-            potential_data%fourier_indices_y(idx) .eq. 0 &
-            ) then
-            potential_data%specular_component_index = idx
-         end if
-      end do
-   end do
-
-   potential_data%fixed_fourier_values = potential_values
-
    call run_scattering_linear_step( &
-      optimization_data, potential_data, perpendicular_kinetic_difference, &
+      optimization_data, potential_values, perpendicular_kinetic_difference, &
       wave_a, wave_b, wave_c, channel_intensity_dense, parallel_kinetic_energy &
       )
 
-   specular_i = ((potential_data%specular_component_index - 1) / nky) + 1
-   specular_j = mod(potential_data%specular_component_index - 1, nky) + 1
+   specular_i = 1
+   specular_j = 1
    if (channel_intensity_dense(specular_i, specular_j) < 0.0_dp) then
       ierr = 2
    end if
-
-   if (allocated(potential_data%fourier_indices_x)) deallocate(potential_data%fourier_indices_x)
-   if (allocated(potential_data%fourier_indices_y)) deallocate(potential_data%fourier_indices_y)
-   if (allocated(potential_data%fixed_fourier_values)) deallocate(potential_data%fixed_fourier_values)
 end subroutine run_multiscat_fortran
 
 subroutine get_perpendicular_kinetic_difference( &

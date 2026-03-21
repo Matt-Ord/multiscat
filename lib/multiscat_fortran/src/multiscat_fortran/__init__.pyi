@@ -4,16 +4,12 @@ from numpy.typing import NDArray
 def run_multiscat_fortran(
     gmres_preconditioner_flag: int,
     convergence_significant_figures: int,
-    nkx: int,
-    nky: int,
     potential_values: NDArray[np.complex128],
     perpendicular_kinetic_difference: NDArray[np.float64],
     wave_a: NDArray[np.complex128],
     wave_b: NDArray[np.complex128],
     wave_c: NDArray[np.complex128],
     parallel_kinetic_energy: NDArray[np.float64],
-    *,
-    nz: int,
 ) -> tuple[
     NDArray[np.float64],
     int,

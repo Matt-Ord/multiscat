@@ -32,7 +32,7 @@ if __name__ == "__main__":
             np.array([0, UNIT_CELL, 0]),
             np.array([0, 0, Z_HEIGHT]),
         ),
-        (10, 10, 550),
+        (15, 15, 550),
     )
     condition = ScatteringCondition.from_angles(
         mass=HELIUM_MASS,
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     )
     config = OptimizationConfig(precision=1e-5, max_iterations=1000)
     s_matrix = get_scattering_matrix(condition, config)
-    fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix)
+    fig, ax, _mesh = plot.array_against_axes_2d(s_matrix, measure="abs")
     ax.set_title("The scattering matrix")
     fig.show()
     fig.savefig("scattering_matrix.png")
