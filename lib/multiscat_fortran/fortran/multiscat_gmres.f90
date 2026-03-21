@@ -27,14 +27,10 @@ module multiscat_gmres
       integer :: n_z_points = 0
       integer :: nkx = 0
       integer :: nky = 0
-      integer :: preconditioner_flag = 0
       type(ChannelIdxData), pointer :: channel_idx => null()
       complex(dp), pointer :: potential_values(:,:,:) => null()
       complex(dp), pointer :: wave_c(:) => null()
       real(dp), pointer :: perpendicular_kinetic_difference(:,:) => null()
-      real(dp), pointer :: eigenvalues(:) => null()
-      real(dp), pointer :: preconditioner_factors(:,:) => null()
-      real(dp), pointer :: kinetic_matrix(:,:) => null()
    end type ScatteringOperator
 
    public :: ChannelIdxData
@@ -104,7 +100,7 @@ contains
 
    subroutine run_preconditioned_gmres (n_z_points, &
    & potential_values,nkx,nky, &
-   & a,b,c,perpendicular_kinetic_difference,p,t,convergence_eps, &
+   & a,b,c,perpendicular_kinetic_difference,p,kinetic_matrix,convergence_eps, &
    & preconditioner_flag)
       implicit none
       integer, intent(in) :: n_z_points
@@ -113,7 +109,7 @@ contains
       complex(dp), intent(in) :: a(:), b(:), c(:)
       real(dp), intent(in) :: perpendicular_kinetic_difference(nkx,nky)
       real(dp), intent(out) :: p(:)
-      real(dp), intent(in) :: t(n_z_points,n_z_points)
+      real(dp), intent(in) :: kinetic_matrix(n_z_points,n_z_points)
       real(dp), intent(in) :: convergence_eps
       type(GmresOptions) :: options
       type(GmresResult) :: result
@@ -125,7 +121,7 @@ contains
 
       call solve_scattering_gmres ( &
          n_z_points, potential_values, nkx, nky, a, b, c, &
-         perpendicular_kinetic_difference, p, t, options, result &
+         perpendicular_kinetic_difference, p, kinetic_matrix, options, result &
          )
 
       if (result%info /= 0) p = -1.0_dp
@@ -133,7 +129,7 @@ contains
 
    subroutine solve_scattering_gmres (n_z_points, &
    & potential_values,nkx,nky, &
-   & a,b,c,perpendicular_kinetic_difference,p,t,options,result)
+   & a,b,c,perpendicular_kinetic_difference,p,kinetic_matrix,options,result)
       implicit none
       integer, intent(in) :: n_z_points
       integer, intent(in) :: nkx, nky
@@ -141,7 +137,7 @@ contains
       complex(dp), intent(in) :: a(:), b(:), c(:)
       real(dp), intent(in) :: perpendicular_kinetic_difference(nkx,nky)
       real(dp), intent(out) :: p(:)
-      real(dp), intent(in) :: t(n_z_points,n_z_points)
+      real(dp), intent(in) :: kinetic_matrix(n_z_points,n_z_points)
       type(GmresOptions), intent(in) :: options
       type(GmresResult), intent(out) :: result
 
@@ -149,7 +145,7 @@ contains
       integer :: mn, channel_count
       type(ChannelIdxData) :: channel_idx
       complex(dp), allocatable :: x(:), xx(:,:), y(:), s(:)
-      real(dp), allocatable :: e(:), f(:,:), t_work(:,:)
+      real(dp), allocatable :: channel_eigenvalues(:), channel_preconditioner_factors(:,:), kinetic_matrix_work(:,:)
 
       channel_count = size(a)
       if (size(b) /= channel_count .or. size(c) /= channel_count .or. size(p) /= channel_count) then
@@ -167,19 +163,25 @@ contains
       mn = n_z_points*channel_count
       allocate(x(mn), xx(mn,l+1), y(mn), s(channel_count), stat=alloc_status)
       if (alloc_status /= 0) error stop 'ERROR: allocation failure (x, xx, y, s).'
-      allocate(e(n_z_points), f(n_z_points,channel_count), t_work(n_z_points,n_z_points), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (e, f, t_work).'
+      allocate(channel_eigenvalues(n_z_points), &
+      & channel_preconditioner_factors(n_z_points,channel_count), &
+      & kinetic_matrix_work(n_z_points,n_z_points), stat=alloc_status)
+      if (alloc_status /= 0) then
+         error stop 'ERROR: allocation failure (channel_eigenvalues/channel_preconditioner_factors/kinetic_matrix_work).'
+      end if
 
-      t_work = t
+      kinetic_matrix_work = kinetic_matrix
 
       call build_preconditioner ( &
          n_z_points, channel_idx, potential_values, nkx, nky, &
-         perpendicular_kinetic_difference, e, f, t_work &
+         perpendicular_kinetic_difference, channel_eigenvalues, channel_preconditioner_factors, kinetic_matrix_work &
          )
 
       call solve_gmres_system ( &
          x, xx, y, n_z_points, channel_idx, potential_values, nkx, nky, &
-         a, b, c, perpendicular_kinetic_difference, e, f, p, s, t_work, options, result &
+         a, b, c, perpendicular_kinetic_difference, &
+         channel_eigenvalues, channel_preconditioner_factors, p, s, &
+         kinetic_matrix_work, options, result &
          )
 
       if (allocated(channel_idx%index_x)) deallocate(channel_idx%index_x)
@@ -188,9 +190,9 @@ contains
       if (allocated(xx)) deallocate(xx)
       if (allocated(y)) deallocate(y)
       if (allocated(s)) deallocate(s)
-      if (allocated(e)) deallocate(e)
-      if (allocated(f)) deallocate(f)
-      if (allocated(t_work)) deallocate(t_work)
+      if (allocated(channel_eigenvalues)) deallocate(channel_eigenvalues)
+      if (allocated(channel_preconditioner_factors)) deallocate(channel_preconditioner_factors)
+      if (allocated(kinetic_matrix_work)) deallocate(kinetic_matrix_work)
    end subroutine solve_scattering_gmres
 
    subroutine build_preconditioner (n_z_points, channel_idx, &
@@ -243,62 +245,52 @@ contains
    end subroutine build_preconditioner
 
    subroutine init_scattering_operator (operator_data,n_z_points,channel_idx, &
-   & potential_values,nkx,nky,c,perpendicular_kinetic_difference,e,f,t,preconditioner_flag)
+   & potential_values,nkx,nky,c,perpendicular_kinetic_difference)
       implicit none
       type(ScatteringOperator), intent(out) :: operator_data
-      integer, intent(in) :: n_z_points, nkx, nky, preconditioner_flag
+      integer, intent(in) :: n_z_points, nkx, nky
       type(ChannelIdxData), target, intent(in) :: channel_idx
       complex(dp), target, intent(in) :: potential_values(nkx,nky,n_z_points)
       complex(dp), target, intent(in) :: c(:)
-      real(dp), target, intent(in) :: perpendicular_kinetic_difference(nkx,nky), e(n_z_points)
-      real(dp), target, intent(in) :: f(n_z_points,size(channel_idx%index_x))
-      real(dp), target, intent(in) :: t(n_z_points,n_z_points)
+      real(dp), target, intent(in) :: perpendicular_kinetic_difference(nkx,nky)
 
       operator_data%n_z_points = n_z_points
       operator_data%nkx = nkx
       operator_data%nky = nky
-      operator_data%preconditioner_flag = preconditioner_flag
       operator_data%channel_idx => channel_idx
       operator_data%potential_values => potential_values
       operator_data%wave_c => c
       operator_data%perpendicular_kinetic_difference => perpendicular_kinetic_difference
-      operator_data%eigenvalues => e
-      operator_data%preconditioner_factors => f
-      operator_data%kinetic_matrix => t
    end subroutine init_scattering_operator
 
-   subroutine apply_scattering_operator (x,y,operator_data)
+   subroutine apply_scattering_operator (x,y,operator_data,eigenvalues,preconditioner_factors,kinetic_matrix,options)
       implicit none
       type(ScatteringOperator), intent(in) :: operator_data
+      type(GmresOptions), intent(in) :: options
       complex(dp), intent(inout) :: x(operator_data%n_z_points*size(operator_data%channel_idx%index_x))
       complex(dp), intent(inout) :: y(operator_data%n_z_points*size(operator_data%channel_idx%index_x))
+      real(dp), intent(in) :: eigenvalues(operator_data%n_z_points)
+      real(dp), intent(in) :: preconditioner_factors(operator_data%n_z_points,size(operator_data%channel_idx%index_x))
+      real(dp), intent(in) :: kinetic_matrix(operator_data%n_z_points,operator_data%n_z_points)
       integer :: mn
 
       mn = operator_data%n_z_points*size(operator_data%channel_idx%index_x)
       y(1:mn) = x(1:mn)
-      call apply_upper_block (x,operator_data%n_z_points,operator_data%channel_idx, &
-      & operator_data%potential_values,operator_data%nkx,operator_data%nky)
-      call solve_lower_block (x,operator_data%n_z_points,operator_data%channel_idx, &
-      & operator_data%potential_values,operator_data%nkx,operator_data%nky, &
-      & operator_data%wave_c,operator_data%perpendicular_kinetic_difference, &
-      & operator_data%eigenvalues,operator_data%preconditioner_factors,operator_data%kinetic_matrix)
+      call apply_upper_block (x,operator_data)
+      call solve_lower_block (x,operator_data,eigenvalues,preconditioner_factors,kinetic_matrix)
       x(1:mn) = y(1:mn) + x(1:mn)
 
-      if (operator_data%preconditioner_flag .eq. 1) then
+      if (options%preconditioner_flag .eq. 1) then
          y(1:mn) = x(1:mn)
-         call apply_upper_block (x,operator_data%n_z_points,operator_data%channel_idx, &
-         & operator_data%potential_values,operator_data%nkx,operator_data%nky)
-         call solve_lower_block (x,operator_data%n_z_points,operator_data%channel_idx, &
-         & operator_data%potential_values,operator_data%nkx,operator_data%nky, &
-         & operator_data%wave_c,operator_data%perpendicular_kinetic_difference, &
-         & operator_data%eigenvalues,operator_data%preconditioner_factors,operator_data%kinetic_matrix)
+         call apply_upper_block (x,operator_data)
+         call solve_lower_block (x,operator_data,eigenvalues,preconditioner_factors,kinetic_matrix)
          x(1:mn) = y(1:mn) - x(1:mn)
       end if
    end subroutine apply_scattering_operator
 
    subroutine solve_gmres_system (x,xx,y,n_z_points, &
    & channel_idx, potential_values, nkx, nky, &
-   & a,b,c,perpendicular_kinetic_difference,e,f,p,s,t,options,result)
+   & a,b,c,perpendicular_kinetic_difference,channel_eigenvalues,channel_preconditioner_factors,p,s,kinetic_matrix,options,result)
       implicit none
       integer, intent(in) :: n_z_points, nkx, nky
       type(ChannelIdxData), intent(in) :: channel_idx
@@ -309,10 +301,10 @@ contains
       complex(dp), intent(in) :: a(:), b(:)
       complex(dp), target, intent(in) :: c(:)
       complex(dp), intent(out) :: s(size(channel_idx%index_x))
-      real(dp), target, intent(in) :: perpendicular_kinetic_difference(nkx,nky), e(n_z_points)
-      real(dp), target, intent(in) :: f(n_z_points,size(channel_idx%index_x))
+      real(dp), target, intent(in) :: perpendicular_kinetic_difference(nkx,nky), channel_eigenvalues(n_z_points)
+      real(dp), target, intent(in) :: channel_preconditioner_factors(n_z_points,size(channel_idx%index_x))
       real(dp), intent(out) :: p(size(channel_idx%index_x))
-      real(dp), target, intent(in) :: t(n_z_points,n_z_points)
+      real(dp), target, intent(in) :: kinetic_matrix(n_z_points,n_z_points)
       type(GmresOptions), intent(in) :: options
       type(GmresResult), intent(out) :: result
 
@@ -331,7 +323,7 @@ contains
 
       call init_scattering_operator ( &
       & operator_data, n_z_points, channel_idx, potential_values, nkx, nky, c, &
-      & perpendicular_kinetic_difference, e, f, t, options%preconditioner_flag &
+      & perpendicular_kinetic_difference &
       & )
 
       allocate(h(l+1,l+1), g(l+1), z(l+1), co(l+1), si(l+1), stat=alloc_status)
@@ -346,19 +338,17 @@ contains
 
       xx(1:mn,1)=x(1:mn)
       y(1:mn) = x(1:mn)
-      call apply_upper_block (x,n_z_points,channel_idx, potential_values,nkx,nky)
+      call apply_upper_block (x,operator_data)
       do i = 1,mn
          x(i) = -x(i)
       enddo
       x(n_z_points*specular_channel_index) = b(specular_channel_index)+x(n_z_points*specular_channel_index)
-      call solve_lower_block (x,n_z_points,channel_idx, potential_values,nkx,nky, &
-      & c,perpendicular_kinetic_difference,e,f,t)
+      call solve_lower_block (x,operator_data,channel_eigenvalues,channel_preconditioner_factors,kinetic_matrix)
       x(1:mn) = x(1:mn)-y(1:mn)
       if (options%preconditioner_flag .eq. 1) then
          y(1:mn) = x(1:mn)
-         call apply_upper_block (x,n_z_points,channel_idx,potential_values,nkx,nky)
-         call solve_lower_block (x,n_z_points,channel_idx,potential_values,nkx,nky, &
-         & c,perpendicular_kinetic_difference,e,f,t)
+         call apply_upper_block (x,operator_data)
+         call solve_lower_block (x,operator_data,channel_eigenvalues,channel_preconditioner_factors,kinetic_matrix)
          x(1:mn) = y(1:mn)-x(1:mn)
       end if
       xnorm = 0.0d0
@@ -379,7 +369,8 @@ contains
             x(i) = x(i)/xnorm
          enddo
          xx(1:mn,k+1)=x(1:mn)
-         call apply_scattering_operator (x,y,operator_data)
+         call apply_scattering_operator (x,y,operator_data, &
+         & channel_eigenvalues,channel_preconditioner_factors,kinetic_matrix,options)
          y(1:mn)=xx(1:mn,1)
          do i = 1,channel_count
             s(i) = y(n_z_points*i)
@@ -465,78 +456,70 @@ contains
       if (allocated(si)) deallocate(si)
    end subroutine solve_gmres_system
 
-   subroutine apply_upper_block (state_vector,n_z_points, channel_idx, &
-   & potential_values,nkx,nky)
+   subroutine apply_upper_block (state_vector,operator_data)
       implicit none
-      integer, intent(in) :: n_z_points, nkx, nky
-      type(ChannelIdxData), intent(in) :: channel_idx
-      complex(dp), intent(inout) :: state_vector(n_z_points,size(channel_idx%index_x))
-      complex(dp), intent(in) :: potential_values(nkx,nky,n_z_points)
+      type(ScatteringOperator), intent(in) :: operator_data
+      complex(dp), intent(inout) :: state_vector(operator_data%n_z_points,size(operator_data%channel_idx%index_x))
       integer :: i, j, k, ix, iy, channel_count
 
-      channel_count = size(channel_idx%index_x)
+      channel_count = size(operator_data%channel_idx%index_x)
       do j = 1,channel_count
-         do k = 1,n_z_points
+         do k = 1,operator_data%n_z_points
             state_vector(k,j) = (0.0d0,0.0d0)
          enddo
          do i = j+1,channel_count
-            ix = mode_to_storage(channel_idx%index_x(j)-channel_idx%index_x(i), nkx)
-            iy = mode_to_storage(channel_idx%index_y(j)-channel_idx%index_y(i), nky)
-            do k = 1,n_z_points
-               state_vector(k,j) = state_vector(k,j) + potential_values(ix,iy,k)*state_vector(k,i)
+            ix = mode_to_storage(operator_data%channel_idx%index_x(j)-operator_data%channel_idx%index_x(i), operator_data%nkx)
+            iy = mode_to_storage(operator_data%channel_idx%index_y(j)-operator_data%channel_idx%index_y(i), operator_data%nky)
+            do k = 1,operator_data%n_z_points
+               state_vector(k,j) = state_vector(k,j) + operator_data%potential_values(ix,iy,k)*state_vector(k,i)
             enddo
          enddo
       enddo
    end subroutine apply_upper_block
 
-   subroutine solve_lower_block (state_vector,n_z_points, channel_idx, &
-   & potential_values,nkx,nky,wave_c,perpendicular_kinetic_difference, &
-   & eigenvalues,preconditioner_factors,kinetic_matrix)
+   subroutine solve_lower_block (state_vector,operator_data,eigenvalues,preconditioner_factors,kinetic_matrix)
       implicit none
-      integer, intent(in) :: n_z_points, nkx, nky
-      type(ChannelIdxData), intent(in) :: channel_idx
-      complex(dp), intent(inout) :: state_vector(n_z_points,size(channel_idx%index_x))
-      complex(dp), intent(in) :: potential_values(nkx,nky,n_z_points)
-      complex(dp), intent(in) :: wave_c(size(channel_idx%index_x))
-      real(dp), intent(in) :: perpendicular_kinetic_difference(nkx,nky), eigenvalues(n_z_points)
-      real(dp), intent(in) :: preconditioner_factors(n_z_points,size(channel_idx%index_x))
-      real(dp), intent(in) :: kinetic_matrix(n_z_points,n_z_points)
+      type(ScatteringOperator), intent(in) :: operator_data
+      complex(dp), intent(inout) :: state_vector(operator_data%n_z_points,size(operator_data%channel_idx%index_x))
+      real(dp), intent(in) :: eigenvalues(operator_data%n_z_points)
+      real(dp), intent(in) :: preconditioner_factors(operator_data%n_z_points,size(operator_data%channel_idx%index_x))
+      real(dp), intent(in) :: kinetic_matrix(operator_data%n_z_points,operator_data%n_z_points)
       integer :: i, j, k, l, ix, iy, channel_count
       real(dp) :: channel_energy
-      complex(dp) :: y(n_z_points), fac
+      complex(dp) :: y(operator_data%n_z_points), fac
 
-      channel_count = size(channel_idx%index_x)
+      channel_count = size(operator_data%channel_idx%index_x)
       do j = 1,channel_count
          do i = 1,j-1
-            ix = mode_to_storage(channel_idx%index_x(j)-channel_idx%index_x(i), nkx)
-            iy = mode_to_storage(channel_idx%index_y(j)-channel_idx%index_y(i), nky)
-            do k = 1,n_z_points
-               state_vector(k,j) = state_vector(k,j) - potential_values(ix,iy,k)*state_vector(k,i)
+            ix = mode_to_storage(operator_data%channel_idx%index_x(j)-operator_data%channel_idx%index_x(i), operator_data%nkx)
+            iy = mode_to_storage(operator_data%channel_idx%index_y(j)-operator_data%channel_idx%index_y(i), operator_data%nky)
+            do k = 1,operator_data%n_z_points
+               state_vector(k,j) = state_vector(k,j) - operator_data%potential_values(ix,iy,k)*state_vector(k,i)
             enddo
          enddo
 
-         ix = mode_to_storage(channel_idx%index_x(j), nkx)
-         iy = mode_to_storage(channel_idx%index_y(j), nky)
-         channel_energy = perpendicular_kinetic_difference(ix, iy)
+         ix = mode_to_storage(operator_data%channel_idx%index_x(j), operator_data%nkx)
+         iy = mode_to_storage(operator_data%channel_idx%index_y(j), operator_data%nky)
+         channel_energy = operator_data%perpendicular_kinetic_difference(ix, iy)
 
-         do k = 1,n_z_points
+         do k = 1,operator_data%n_z_points
             y(k) = (0.0d0,0.0d0)
-            do l = 1,n_z_points
+            do l = 1,operator_data%n_z_points
                y(k) = y(k)+state_vector(l,j)*kinetic_matrix(l,k)
             enddo
             y(k) = y(k)/(channel_energy+eigenvalues(k))
          enddo
-         do k = 1,n_z_points
+         do k = 1,operator_data%n_z_points
             state_vector(k,j) = (0.0d0,0.0d0)
          enddo
-         do l = 1,n_z_points
-            do k = 1,n_z_points
+         do l = 1,operator_data%n_z_points
+            do k = 1,operator_data%n_z_points
                state_vector(k,j) = state_vector(k,j)+kinetic_matrix(k,l)*y(l)
             enddo
          enddo
-         fac = state_vector(n_z_points,j)*wave_c(j)/ &
-         & (1.0d0-preconditioner_factors(n_z_points,j)*wave_c(j))
-         do k = 1,n_z_points
+         fac = state_vector(operator_data%n_z_points,j)*operator_data%wave_c(j)/ &
+         & (1.0d0-preconditioner_factors(operator_data%n_z_points,j)*operator_data%wave_c(j))
+         do k = 1,operator_data%n_z_points
             state_vector(k,j) = state_vector(k,j) + fac*preconditioner_factors(k,j)
          enddo
       enddo
