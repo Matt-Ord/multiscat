@@ -425,6 +425,27 @@ def get_scattering_matrix_from_state[
     )
 
 
+def get_scattered_intensity(
+    scattered_state_dense: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    wave_a: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    wave_b: np.ndarray[tuple[int], np.dtype[np.complex128]],
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """Recover per-channel intensities from the optimized scattered state."""
+    nkx, nky, _ = scattered_state_dense.shape
+    channel_count = nkx * nky
+    if wave_a.size != channel_count or wave_b.size != channel_count:
+        msg = "wave_a and wave_b must have size nkx * nky."
+        raise ValueError(msg)
+
+    surface_state = np.asarray(scattered_state_dense[:, :, -1]).ravel(order="C")
+    scattered_amplitude = (2.0j * wave_b * surface_state).astype(
+        np.complex128,
+        copy=False,
+    )
+    scattered_amplitude[0] = wave_a[0] + scattered_amplitude[0]
+    return (np.abs(scattered_amplitude) ** 2).reshape((nkx, nky), order="C")
+
+
 def get_scattering_matrix[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
@@ -503,25 +524,29 @@ def get_scattering_matrix[
         potential_values * ((2.0 * mass_amu) / hbar_squared),
     )
 
-    run_result = cast(
-        "tuple[np.ndarray[Any, np.dtype[np.floating]], int]",
-        run_multiscat_fortran(  # type: ignore[call-arg]
-            gmres_preconditioner_flag,
-            convergence_significant_figures,
-            potential_values=scaled_potential_values,
-            perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-            wave_a=wave_a,
-            wave_b=wave_b,
-            wave_c=wave_c,
-            parallel_kinetic_energy=parallel_kinetic_energy,
-        ),
+    run_result = run_multiscat_fortran(
+        gmres_preconditioner_flag,
+        convergence_significant_figures,
+        potential_values=scaled_potential_values,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+        wave_a=wave_a,
+        wave_b=wave_b,
+        wave_c=wave_c,
+        parallel_kinetic_energy=parallel_kinetic_energy,
     )
-    channel_intensity_dense = np.asarray(run_result[0], dtype=np.float64)
+
+    scattered_state_dense = np.asarray(run_result[0], dtype=np.complex128)
     ierr = int(run_result[1])
 
     if ierr != 0:
         msg = f"Fortran run_multiscat_fortran failed with error code {ierr}"
         raise RuntimeError(msg)
+
+    channel_intensity_dense = get_scattered_intensity(
+        scattered_state_dense,
+        wave_a,
+        wave_b,
+    )
 
     metadata_x01, _ = split_scattering_metadata(condition.metadata)
     return Array(

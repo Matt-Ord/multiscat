@@ -1,6 +1,6 @@
 python module _multiscat_f2py
     interface
-        subroutine run_multiscat_fortran(gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, potential_values, perpendicular_kinetic_difference, wave_a, wave_b, wave_c, parallel_kinetic_energy, channel_intensity_dense, ierr)
+        subroutine run_multiscat_fortran(gmres_preconditioner_flag, convergence_significant_figures, nkx, nky, nz, potential_values, perpendicular_kinetic_difference, wave_a, wave_b, wave_c, parallel_kinetic_energy, scattered_state_dense, ierr)
             integer intent(in) :: gmres_preconditioner_flag
             integer intent(in) :: convergence_significant_figures
             integer intent(hide), depend(potential_values) :: nkx = shape(potential_values, 0)
@@ -12,7 +12,7 @@ python module _multiscat_f2py
             complex*16 dimension(nkx*nky), intent(in) :: wave_b
             complex*16 dimension(nkx*nky), intent(in) :: wave_c
             double precision dimension(nz, nz), intent(in) :: parallel_kinetic_energy
-            double precision dimension(nkx, nky), intent(out) :: channel_intensity_dense
+            complex*16 dimension(nkx, nky, nz), intent(out) :: scattered_state_dense
             integer intent(out) :: ierr
         end subroutine run_multiscat_fortran
 

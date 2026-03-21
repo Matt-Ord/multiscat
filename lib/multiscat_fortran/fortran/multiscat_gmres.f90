@@ -38,6 +38,7 @@ module multiscat_gmres
    public :: GmresResult
    public :: ScatteringOperator
    public :: get_channel_index
+   public :: get_scattered_intensity
    public :: solve_scattering_gmres
    public :: run_preconditioned_gmres
 
@@ -100,17 +101,18 @@ contains
 
    subroutine run_preconditioned_gmres (n_z_points, &
    & potential_values,nkx,nky, &
-   & a,b,c,perpendicular_kinetic_difference,p,kinetic_matrix,convergence_eps, &
-   & preconditioner_flag)
+   & a,b,c,perpendicular_kinetic_difference,scattered_state,kinetic_matrix,convergence_eps, &
+   & preconditioner_flag,info)
       implicit none
       integer, intent(in) :: n_z_points
       integer, intent(in) :: nkx, nky, preconditioner_flag
       complex(dp), intent(in) :: potential_values(nkx,nky,n_z_points)
       complex(dp), intent(in) :: a(:), b(:), c(:)
       real(dp), intent(in) :: perpendicular_kinetic_difference(nkx,nky)
-      real(dp), intent(out) :: p(:)
+      complex(dp), intent(out) :: scattered_state(n_z_points,size(a))
       real(dp), intent(in) :: kinetic_matrix(n_z_points,n_z_points)
       real(dp), intent(in) :: convergence_eps
+      integer, intent(out) :: info
       type(GmresOptions) :: options
       type(GmresResult) :: result
 
@@ -121,22 +123,22 @@ contains
 
       call solve_scattering_gmres ( &
          n_z_points, potential_values, nkx, nky, a, b, c, &
-         perpendicular_kinetic_difference, p, kinetic_matrix, options, result &
+         perpendicular_kinetic_difference, scattered_state, kinetic_matrix, options, result &
          )
 
-      if (result%info /= 0) p = -1.0_dp
+      info = result%info
    end subroutine run_preconditioned_gmres
 
    subroutine solve_scattering_gmres (n_z_points, &
    & potential_values,nkx,nky, &
-   & a,b,c,perpendicular_kinetic_difference,p,kinetic_matrix,options,result)
+   & a,b,c,perpendicular_kinetic_difference,scattered_state,kinetic_matrix,options,result)
       implicit none
       integer, intent(in) :: n_z_points
       integer, intent(in) :: nkx, nky
       complex(dp), intent(in) :: potential_values(nkx,nky,n_z_points)
       complex(dp), intent(in) :: a(:), b(:), c(:)
       real(dp), intent(in) :: perpendicular_kinetic_difference(nkx,nky)
-      real(dp), intent(out) :: p(:)
+      complex(dp), intent(out) :: scattered_state(n_z_points,size(a))
       real(dp), intent(in) :: kinetic_matrix(n_z_points,n_z_points)
       type(GmresOptions), intent(in) :: options
       type(GmresResult), intent(out) :: result
@@ -145,11 +147,15 @@ contains
       integer :: mn, channel_count
       type(ChannelIdxData) :: channel_idx
       complex(dp), allocatable :: x(:), xx(:,:), y(:), s(:)
+      real(dp), allocatable :: intensity_work(:)
       real(dp), allocatable :: channel_eigenvalues(:), channel_preconditioner_factors(:,:), kinetic_matrix_work(:,:)
 
       channel_count = size(a)
-      if (size(b) /= channel_count .or. size(c) /= channel_count .or. size(p) /= channel_count) then
+      if (size(b) /= channel_count .or. size(c) /= channel_count) then
          error stop 'ERROR: inconsistent channel vector sizes.'
+      end if
+      if (size(scattered_state, 1) /= n_z_points .or. size(scattered_state, 2) /= channel_count) then
+         error stop 'ERROR: scattered_state shape does not match solver dimensions.'
       end if
       if (options%rtol <= 0.0_dp) error stop 'ERROR: GMRES rtol must be positive.'
       if (options%maxiter <= 0) error stop 'ERROR: GMRES maxiter must be positive.'
@@ -163,6 +169,8 @@ contains
       mn = n_z_points*channel_count
       allocate(x(mn), xx(mn,l+1), y(mn), s(channel_count), stat=alloc_status)
       if (alloc_status /= 0) error stop 'ERROR: allocation failure (x, xx, y, s).'
+      allocate(intensity_work(channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (intensity_work).'
       allocate(channel_eigenvalues(n_z_points), &
       & channel_preconditioner_factors(n_z_points,channel_count), &
       & kinetic_matrix_work(n_z_points,n_z_points), stat=alloc_status)
@@ -180,9 +188,11 @@ contains
       call solve_gmres_system ( &
          x, xx, y, n_z_points, channel_idx, potential_values, nkx, nky, &
          a, b, c, perpendicular_kinetic_difference, &
-         channel_eigenvalues, channel_preconditioner_factors, p, s, &
+         channel_eigenvalues, channel_preconditioner_factors, intensity_work, s, &
          kinetic_matrix_work, options, result &
          )
+
+      scattered_state = reshape(x, shape(scattered_state))
 
       if (allocated(channel_idx%index_x)) deallocate(channel_idx%index_x)
       if (allocated(channel_idx%index_y)) deallocate(channel_idx%index_y)
@@ -190,10 +200,33 @@ contains
       if (allocated(xx)) deallocate(xx)
       if (allocated(y)) deallocate(y)
       if (allocated(s)) deallocate(s)
+      if (allocated(intensity_work)) deallocate(intensity_work)
       if (allocated(channel_eigenvalues)) deallocate(channel_eigenvalues)
       if (allocated(channel_preconditioner_factors)) deallocate(channel_preconditioner_factors)
       if (allocated(kinetic_matrix_work)) deallocate(kinetic_matrix_work)
    end subroutine solve_scattering_gmres
+
+   subroutine get_scattered_intensity (scattered_state, wave_a, wave_b, channel_intensity)
+      implicit none
+      complex(dp), intent(in) :: scattered_state(:,:)
+      complex(dp), intent(in) :: wave_a(:), wave_b(:)
+      real(dp), intent(out) :: channel_intensity(:)
+
+      integer :: j, channel_count, n_z_points
+      complex(dp) :: scattered_amplitude
+
+      n_z_points = size(scattered_state, 1)
+      channel_count = size(scattered_state, 2)
+      if (size(wave_a) /= channel_count .or. size(wave_b) /= channel_count .or. size(channel_intensity) /= channel_count) then
+         error stop 'ERROR: inconsistent channel vector sizes in get_scattered_intensity.'
+      end if
+
+      do j = 1,channel_count
+         scattered_amplitude = (0.0d0,2.0d0)*wave_b(j)*scattered_state(n_z_points,j)
+         if (j .eq. 1) scattered_amplitude = wave_a(j)+scattered_amplitude
+         channel_intensity(j) = real(conjg(scattered_amplitude)*scattered_amplitude,kind=dp)
+      enddo
+   end subroutine get_scattered_intensity
 
    subroutine build_preconditioner (n_z_points, channel_idx, &
    & potential_values, nkx, nky, perpendicular_kinetic_difference, &

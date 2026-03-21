@@ -11,7 +11,7 @@ def run_multiscat_fortran(
     wave_c: NDArray[np.complex128],
     parallel_kinetic_energy: NDArray[np.float64],
 ) -> tuple[
-    NDArray[np.float64],
+    NDArray[np.complex128],
     int,
 ]: ...
 def get_perpendicular_kinetic_difference(

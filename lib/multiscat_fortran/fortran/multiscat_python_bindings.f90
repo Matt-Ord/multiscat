@@ -10,7 +10,7 @@ subroutine run_multiscat_fortran( &
    wave_b, &
    wave_c, &
    parallel_kinetic_energy, &
-   channel_intensity_dense, &
+   scattered_state_dense, &
    ierr &
    )
    use, intrinsic :: iso_fortran_env, only: real64
@@ -30,10 +30,10 @@ subroutine run_multiscat_fortran( &
    complex(dp), intent(in) :: wave_b(nkx * nky)
    complex(dp), intent(in) :: wave_c(nkx * nky)
    real(dp), intent(in) :: parallel_kinetic_energy(nz, nz)
-   real(dp), intent(out) :: channel_intensity_dense(nkx, nky)
+   complex(dp), intent(out) :: scattered_state_dense(nkx, nky, nz)
    integer, intent(out) :: ierr
 
-   integer :: specular_i, specular_j
+   integer :: gmres_info
 
    type(OptimizationData) :: optimization_data
 
@@ -44,7 +44,7 @@ subroutine run_multiscat_fortran( &
       return
    end if
 
-   channel_intensity_dense = 0.0_dp
+   scattered_state_dense = (0.0_dp, 0.0_dp)
 
    optimization_data%output_mode = 0
    optimization_data%gmres_preconditioner_flag = gmres_preconditioner_flag
@@ -52,12 +52,10 @@ subroutine run_multiscat_fortran( &
 
    call run_scattering_linear_step( &
       optimization_data, potential_values, perpendicular_kinetic_difference, &
-      wave_a, wave_b, wave_c, channel_intensity_dense, parallel_kinetic_energy &
+      wave_a, wave_b, wave_c, scattered_state_dense, parallel_kinetic_energy, gmres_info &
       )
 
-   specular_i = 1
-   specular_j = 1
-   if (channel_intensity_dense(specular_i, specular_j) < 0.0_dp) then
+   if (gmres_info /= 0) then
       ierr = 2
    end if
 end subroutine run_multiscat_fortran
