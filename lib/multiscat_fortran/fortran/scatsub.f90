@@ -8,10 +8,8 @@ module scatsub_basis
    public :: UnitVectors
    public :: ReciprocalVectors
    public :: IncidentWaveData
-   public :: ChannelBasisData
    public :: build_reciprocal_vectors
    public :: get_perpendicular_kinetic_difference
-   public :: perpendicular_momentum_as_legacy_data
    public :: get_abc_arrays
    public :: get_lobatto_weights
    public :: get_parallel_kinetic_energy
@@ -34,14 +32,6 @@ module scatsub_basis
    type :: IncidentWaveData
       real(dp) :: incident_k(3) = 0.0_dp
    end type IncidentWaveData
-
-   type :: ChannelBasisData
-      integer :: channel_count = 0
-      integer :: specular_channel_index = 0
-      integer, allocatable :: channel_index_x(:)
-      integer, allocatable :: channel_index_y(:)
-      real(dp), allocatable :: channel_energy_z(:)
-   end type ChannelBasisData
 
 contains
 
@@ -94,48 +84,6 @@ contains
          end do
       end do
    end subroutine get_perpendicular_kinetic_difference
-
-   function perpendicular_momentum_as_legacy_data(perpendicular_momentum) result(basis_data)
-      implicit none
-      real(dp), intent(in) :: perpendicular_momentum(:,:)
-      type(ChannelBasisData) :: basis_data
-
-      integer :: nx, ny, i, j, idx, alloc_status
-
-      nx = size(perpendicular_momentum, 1)
-      ny = size(perpendicular_momentum, 2)
-      basis_data%channel_count = nx*ny
-      basis_data%specular_channel_index = 0
-
-      allocate(basis_data%channel_index_x(basis_data%channel_count), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (basis_data%channel_index_x).'
-      allocate(basis_data%channel_index_y(basis_data%channel_count), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (basis_data%channel_index_y).'
-      allocate(basis_data%channel_energy_z(basis_data%channel_count), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (basis_data%channel_energy_z).'
-
-      idx = 0
-      do i = 1, nx
-         do j = 1, ny
-            idx = idx + 1
-            basis_data%channel_index_x(idx) = fft_mode_index(i - 1, nx)
-            basis_data%channel_index_y(idx) = fft_mode_index(j - 1, ny)
-            basis_data%channel_energy_z(idx) = perpendicular_momentum(i, j)
-            if (basis_data%channel_index_x(idx) .eq. 0 .and. basis_data%channel_index_y(idx) .eq. 0) then
-               basis_data%specular_channel_index = idx
-            end if
-         end do
-      end do
-      if (basis_data%specular_channel_index .eq. 0) error stop 'ERROR: specular channel not found.'
-   end function perpendicular_momentum_as_legacy_data
-
-   pure integer function fft_mode_index(i0, n) result(ig)
-      implicit none
-      integer, intent(in) :: i0, n
-
-      ig = i0
-      if (i0 .gt. ((n - 1) / 2)) ig = i0 - n
-   end function fft_mode_index
 
    subroutine get_lobatto_weights(z_min, z_max, node_count, w, x)
       implicit none
