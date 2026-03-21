@@ -1,10 +1,12 @@
 import warnings
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
 from multiscat_fortran import (
+    debug_build_preconditioner_fortran,
     get_abc_arrays,
     get_parallel_kinetic_energy,
     get_perpendicular_kinetic_difference,
@@ -446,6 +448,206 @@ def get_scattered_intensity(
     return (np.abs(scattered_amplitude) ** 2).reshape((nkx, nky), order="C")
 
 
+@dataclass(frozen=True)
+class _ScipyOperatorData:
+    nkx: int
+    nky: int
+    nz: int
+    channel_count: int
+    specular_channel: int
+    potential_pairs: np.ndarray[Any, np.dtype[np.complex128]]
+    eigenvalues: np.ndarray[Any, np.dtype[np.float64]]
+    eigenvectors: np.ndarray[Any, np.dtype[np.float64]]
+    channel_energy: np.ndarray[Any, np.dtype[np.float64]]
+    preconditioner_factors: np.ndarray[Any, np.dtype[np.float64]]
+    wave_c: np.ndarray[Any, np.dtype[np.complex128]]
+
+
+def _build_scipy_operator_data(
+    potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    perpendicular_kinetic_difference: np.ndarray[
+        tuple[int, int],
+        np.dtype[np.float64],
+    ],
+    wave_c: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> _ScipyOperatorData:
+    nkx, nky, nz = potential_values.shape
+    channel_count = nkx * nky
+
+    mode_x = np.arange(nkx)
+    mode_x = np.where(mode_x > ((nkx - 1) // 2), mode_x - nkx, mode_x)
+    mode_y = np.arange(nky)
+    mode_y = np.where(mode_y > ((nky - 1) // 2), mode_y - nky, mode_y)
+    idx_x = np.repeat(mode_x, nky)
+    idx_y = np.tile(mode_y, nkx)
+
+    diff_x = (idx_x[:, np.newaxis] - idx_x[np.newaxis, :]) % nkx
+    diff_y = (idx_y[:, np.newaxis] - idx_y[np.newaxis, :]) % nky
+    potential_pairs = np.asarray(
+        potential_values[diff_x, diff_y, :],
+        dtype=np.complex128,
+    )
+
+    preconditioner_raw = debug_build_preconditioner_fortran(
+        potential_values=np.asarray(potential_values, dtype=np.complex128),
+        perpendicular_kinetic_difference=np.asarray(
+            perpendicular_kinetic_difference,
+            dtype=np.float64,
+        ),
+        parallel_kinetic_energy=np.asarray(parallel_kinetic_energy, dtype=np.float64),
+    )
+    eigenvalues = np.asarray(preconditioner_raw[0], dtype=np.float64)
+    preconditioner_factors = np.asarray(preconditioner_raw[1], dtype=np.float64)
+    eigenvectors = np.asarray(preconditioner_raw[2], dtype=np.float64)
+    ierr = int(preconditioner_raw[3])
+    if ierr != 0:
+        msg = (
+            f"Fortran debug_build_preconditioner_fortran failed with error code {ierr}"
+        )
+        raise RuntimeError(msg)
+
+    channel_energy = np.asarray(
+        perpendicular_kinetic_difference[idx_x % nkx, idx_y % nky],
+        dtype=np.float64,
+    )
+
+    try:
+        specular_channel = int(np.flatnonzero((idx_x == 0) & (idx_y == 0))[0])
+    except IndexError as exc:
+        msg = "Specular channel not found."
+        raise RuntimeError(msg) from exc
+
+    return _ScipyOperatorData(
+        nkx=nkx,
+        nky=nky,
+        nz=nz,
+        channel_count=channel_count,
+        specular_channel=specular_channel,
+        potential_pairs=potential_pairs,
+        eigenvalues=np.asarray(eigenvalues, dtype=np.float64),
+        eigenvectors=np.asarray(eigenvectors, dtype=np.float64),
+        channel_energy=channel_energy,
+        preconditioner_factors=preconditioner_factors,
+        wave_c=np.asarray(wave_c, dtype=np.complex128),
+    )
+
+
+def _apply_upper_block_scipy(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: _ScipyOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    state_vector = np.asarray(state_vector, dtype=np.complex128)
+    result = np.zeros(state_vector.shape, dtype=np.complex128)
+    for j in range(operator_data.channel_count):
+        if j + 1 >= operator_data.channel_count:
+            continue
+        coeff = operator_data.potential_pairs[j, j + 1 :, :]
+        result[:, j] = np.einsum("ik,ki->k", coeff, state_vector[:, j + 1 :])
+    return result
+
+
+def _solve_lower_block_scipy(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: _ScipyOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    solved = np.asarray(state_vector, dtype=np.complex128).copy()
+    nz = operator_data.nz
+    for j in range(operator_data.channel_count):
+        if j > 0:
+            coeff = operator_data.potential_pairs[j, :j, :]
+            solved[:, j] -= np.einsum("ik,ki->k", coeff, solved[:, :j])
+
+        y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, j])
+        y = y / (operator_data.channel_energy[j] + operator_data.eigenvalues)
+        solved[:, j] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
+
+        denom = 1.0 - (
+            operator_data.preconditioner_factors[nz - 1, j] * operator_data.wave_c[j]
+        )
+        fac = solved[nz - 1, j] * operator_data.wave_c[j] / denom
+        solved[:, j] = solved[:, j] + (fac * operator_data.preconditioner_factors[:, j])
+    return solved
+
+
+def _run_multiscat_scipy(  # noqa: PLR0913
+    gmres_preconditioner_flag: int,
+    precision: float,
+    max_iterations: int,
+    *,
+    potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    perpendicular_kinetic_difference: np.ndarray[
+        tuple[int, int],
+        np.dtype[np.float64],
+    ],
+    wave_a: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    wave_b: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    wave_c: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> tuple[np.ndarray[tuple[int, int, int], np.dtype[np.complex128]], int]:
+    nkx, nky, nz = potential_values.shape
+    channel_count = nkx * nky
+    if wave_a.size != channel_count:
+        msg = "wave_a must have size nkx * nky."
+        raise ValueError(msg)
+    if wave_b.size != channel_count:
+        msg = "wave_b must have size nkx * nky."
+        raise ValueError(msg)
+    if wave_c.size != channel_count:
+        msg = "wave_c must have size nkx * nky."
+        raise ValueError(msg)
+    operator_data = _build_scipy_operator_data(
+        np.asarray(potential_values, dtype=np.complex128),
+        np.asarray(perpendicular_kinetic_difference, dtype=np.float64),
+        np.asarray(wave_c, dtype=np.complex128),
+        np.asarray(parallel_kinetic_energy, dtype=np.float64),
+    )
+
+    def _apply_operator(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        state = np.asarray(flat_state, dtype=np.complex128).reshape(
+            (nz, channel_count),
+            order="F",
+        )
+        upper = _apply_upper_block_scipy(state, operator_data)
+        lower = _solve_lower_block_scipy(upper, operator_data)
+        out = state + lower
+        if gmres_preconditioner_flag == 1:
+            upper = _apply_upper_block_scipy(out, operator_data)
+            lower = _solve_lower_block_scipy(upper, operator_data)
+            out = out - lower
+        return out.reshape((-1,), order="F")
+
+    rhs = np.zeros((nz, channel_count), dtype=np.complex128)
+    rhs[nz - 1, operator_data.specular_channel] = wave_b[operator_data.specular_channel]
+    rhs = _solve_lower_block_scipy(rhs, operator_data)
+
+    linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+        (nz * channel_count, nz * channel_count),
+        _apply_operator,
+    )
+    gmres_solver = cast("Any", scipy.sparse.linalg.gmres)  # type: ignore[unknown]
+    krylov_dim = min(max_iterations, nz * channel_count)
+    solution, gmres_info = cast(
+        "tuple[np.ndarray[Any, np.dtype[np.complex128]], int]",
+        gmres_solver(
+            A=linear_operator,
+            b=rhs.reshape((-1,), order="F"),
+            rtol=precision,
+            restart=krylov_dim,
+            maxiter=1,
+        ),
+    )
+
+    scattered_state = solution.reshape((nz, channel_count), order="F").T.reshape(
+        (nkx, nky, nz),
+        order="C",
+    )
+    ierr = 0 if gmres_info == 0 else 2
+    return np.asarray(scattered_state, dtype=np.complex128), ierr
+
+
 def get_scattering_matrix[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
@@ -457,6 +659,8 @@ def get_scattering_matrix[
         E,
     ],
     config: OptimizationConfig,
+    *,
+    backend: Literal["fortran", "scipy"] = "fortran",
 ) -> Array[
     Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
     np.dtype[np.complex128],
@@ -524,22 +728,43 @@ def get_scattering_matrix[
         potential_values * ((2.0 * mass_amu) / hbar_squared),
     )
 
-    run_result = run_multiscat_fortran(
-        gmres_preconditioner_flag,
-        convergence_significant_figures,
-        potential_values=scaled_potential_values,
-        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-        wave_a=wave_a,
-        wave_b=wave_b,
-        wave_c=wave_c,
-        parallel_kinetic_energy=parallel_kinetic_energy,
-    )
-
-    scattered_state_dense = np.asarray(run_result[0], dtype=np.complex128)
-    ierr = int(run_result[1])
+    if backend == "fortran":
+        run_result = run_multiscat_fortran(
+            gmres_preconditioner_flag,
+            convergence_significant_figures,
+            potential_values=scaled_potential_values,
+            perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+            wave_a=wave_a,
+            wave_b=wave_b,
+            wave_c=wave_c,
+            parallel_kinetic_energy=parallel_kinetic_energy,
+        )
+        scattered_state_dense = np.asarray(run_result[0], dtype=np.complex128)
+        ierr = int(run_result[1])
+    elif backend == "scipy":
+        scattered_state_dense, ierr = _run_multiscat_scipy(
+            gmres_preconditioner_flag,
+            config.precision,
+            config.max_iterations,
+            potential_values=scaled_potential_values,
+            perpendicular_kinetic_difference=np.asarray(
+                perpendicular_kinetic_difference,
+                dtype=np.float64,
+            ),
+            wave_a=np.asarray(wave_a, dtype=np.complex128),
+            wave_b=np.asarray(wave_b, dtype=np.complex128),
+            wave_c=np.asarray(wave_c, dtype=np.complex128),
+            parallel_kinetic_energy=np.asarray(
+                parallel_kinetic_energy,
+                dtype=np.float64,
+            ),
+        )
+    else:
+        msg = f"Unknown backend '{backend}'. Expected 'fortran' or 'scipy'."
+        raise ValueError(msg)
 
     if ierr != 0:
-        msg = f"Fortran run_multiscat_fortran failed with error code {ierr}"
+        msg = f"{backend.title()} run_multiscat backend failed with error code {ierr}"
         raise RuntimeError(msg)
 
     channel_intensity_dense = get_scattered_intensity(

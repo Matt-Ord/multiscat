@@ -41,6 +41,9 @@ module multiscat_gmres
    public :: get_scattered_intensity
    public :: solve_scattering_gmres
    public :: run_preconditioned_gmres
+   public :: debug_build_preconditioner
+   public :: debug_apply_upper_block
+   public :: debug_solve_lower_block
 
 contains
 
@@ -277,6 +280,50 @@ contains
       if (allocated(g)) deallocate(g)
    end subroutine build_preconditioner
 
+   subroutine debug_build_preconditioner ( &
+   & potential_values, perpendicular_kinetic_difference, parallel_kinetic_energy, &
+   & eigenvalues, preconditioner_factors, eigenvectors, ierr)
+      implicit none
+      complex(dp), intent(in) :: potential_values(:,:,:)
+      real(dp), intent(in) :: perpendicular_kinetic_difference(:,:)
+      real(dp), intent(in) :: parallel_kinetic_energy(:,:)
+      real(dp), intent(out) :: eigenvalues(size(potential_values, 3))
+      real(dp), intent(out) :: preconditioner_factors(size(potential_values, 3), &
+      & size(potential_values, 1) * size(potential_values, 2))
+      real(dp), intent(out) :: eigenvectors(size(potential_values, 3), size(potential_values, 3))
+      integer, intent(out) :: ierr
+
+      integer :: nkx, nky, n_z_points
+      type(ChannelIdxData) :: channel_idx
+
+      ierr = 0
+      nkx = size(potential_values, 1)
+      nky = size(potential_values, 2)
+      n_z_points = size(potential_values, 3)
+
+      if (size(perpendicular_kinetic_difference, 1) /= nkx .or. &
+      & size(perpendicular_kinetic_difference, 2) /= nky) then
+         ierr = 1
+         return
+      end if
+      if (size(parallel_kinetic_energy, 1) /= n_z_points .or. &
+      & size(parallel_kinetic_energy, 2) /= n_z_points) then
+         ierr = 2
+         return
+      end if
+
+      call get_channel_index(perpendicular_kinetic_difference, channel_idx)
+
+      eigenvectors = parallel_kinetic_energy
+      call build_preconditioner ( &
+      & n_z_points, channel_idx, potential_values, nkx, nky, &
+      & perpendicular_kinetic_difference, eigenvalues, preconditioner_factors, eigenvectors &
+      & )
+
+      if (allocated(channel_idx%index_x)) deallocate(channel_idx%index_x)
+      if (allocated(channel_idx%index_y)) deallocate(channel_idx%index_y)
+   end subroutine debug_build_preconditioner
+
    subroutine init_scattering_operator (operator_data,n_z_points,channel_idx, &
    & potential_values,nkx,nky,c,perpendicular_kinetic_difference)
       implicit none
@@ -295,6 +342,120 @@ contains
       operator_data%wave_c => c
       operator_data%perpendicular_kinetic_difference => perpendicular_kinetic_difference
    end subroutine init_scattering_operator
+
+   subroutine debug_apply_upper_block (potential_values, state_in, state_out, ierr)
+      implicit none
+      complex(dp), intent(in) :: potential_values(:,:,:)
+      complex(dp), intent(in) :: state_in(:,:)
+      complex(dp), intent(out) :: state_out(size(state_in, 1), size(state_in, 2))
+      integer, intent(out) :: ierr
+
+      integer :: nkx, nky, n_z_points, channel_count
+      real(dp), allocatable :: dummy_perpendicular(:,:)
+      complex(dp), allocatable :: dummy_wave_c(:)
+      type(ChannelIdxData) :: channel_idx
+      type(ScatteringOperator) :: operator_data
+      integer :: alloc_status
+
+      ierr = 0
+      nkx = size(potential_values, 1)
+      nky = size(potential_values, 2)
+      n_z_points = size(potential_values, 3)
+      channel_count = nkx * nky
+
+      if (size(state_in, 1) /= n_z_points .or. size(state_in, 2) /= channel_count) then
+         ierr = 1
+         return
+      end if
+
+      allocate(dummy_perpendicular(nkx, nky), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (dummy_perpendicular).'
+      allocate(dummy_wave_c(channel_count), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (dummy_wave_c).'
+      dummy_perpendicular = 0.0_dp
+      dummy_wave_c = (0.0_dp, 0.0_dp)
+
+      call get_channel_index(dummy_perpendicular, channel_idx)
+      call init_scattering_operator ( &
+      & operator_data, n_z_points, channel_idx, potential_values, nkx, nky, dummy_wave_c, dummy_perpendicular &
+      & )
+
+      state_out = state_in
+      call apply_upper_block(state_out, operator_data)
+
+      if (allocated(channel_idx%index_x)) deallocate(channel_idx%index_x)
+      if (allocated(channel_idx%index_y)) deallocate(channel_idx%index_y)
+      if (allocated(dummy_perpendicular)) deallocate(dummy_perpendicular)
+      if (allocated(dummy_wave_c)) deallocate(dummy_wave_c)
+   end subroutine debug_apply_upper_block
+
+   subroutine debug_solve_lower_block ( &
+   & potential_values, wave_c, perpendicular_kinetic_difference, parallel_kinetic_energy, &
+   & state_in, state_out, ierr)
+      implicit none
+      complex(dp), intent(in) :: potential_values(:,:,:)
+      complex(dp), intent(in) :: wave_c(:)
+      real(dp), intent(in) :: perpendicular_kinetic_difference(:,:)
+      real(dp), intent(in) :: parallel_kinetic_energy(:,:)
+      complex(dp), intent(in) :: state_in(:,:)
+      complex(dp), intent(out) :: state_out(size(state_in, 1), size(state_in, 2))
+      integer, intent(out) :: ierr
+
+      integer :: nkx, nky, n_z_points, channel_count
+      type(ChannelIdxData) :: channel_idx
+      type(ScatteringOperator) :: operator_data
+      real(dp), allocatable :: eigenvalues(:), preconditioner_factors(:,:), kinetic_matrix_work(:,:)
+      integer :: alloc_status
+
+      ierr = 0
+      nkx = size(potential_values, 1)
+      nky = size(potential_values, 2)
+      n_z_points = size(potential_values, 3)
+      channel_count = nkx * nky
+
+      if (size(wave_c) /= channel_count) then
+         ierr = 1
+         return
+      end if
+      if (size(perpendicular_kinetic_difference, 1) /= nkx .or. &
+      & size(perpendicular_kinetic_difference, 2) /= nky) then
+         ierr = 2
+         return
+      end if
+      if (size(parallel_kinetic_energy, 1) /= n_z_points .or. &
+      & size(parallel_kinetic_energy, 2) /= n_z_points) then
+         ierr = 3
+         return
+      end if
+      if (size(state_in, 1) /= n_z_points .or. size(state_in, 2) /= channel_count) then
+         ierr = 4
+         return
+      end if
+
+      allocate(eigenvalues(n_z_points), preconditioner_factors(n_z_points, channel_count), &
+      & kinetic_matrix_work(n_z_points, n_z_points), stat=alloc_status)
+      if (alloc_status /= 0) error stop 'ERROR: allocation failure (debug_solve_lower_block arrays).'
+
+      call get_channel_index(perpendicular_kinetic_difference, channel_idx)
+      call init_scattering_operator ( &
+      & operator_data, n_z_points, channel_idx, potential_values, nkx, nky, wave_c, perpendicular_kinetic_difference &
+      & )
+
+      kinetic_matrix_work = parallel_kinetic_energy
+      call build_preconditioner ( &
+      & n_z_points, channel_idx, potential_values, nkx, nky, perpendicular_kinetic_difference, &
+      & eigenvalues, preconditioner_factors, kinetic_matrix_work &
+      & )
+
+      state_out = state_in
+      call solve_lower_block(state_out, operator_data, eigenvalues, preconditioner_factors, kinetic_matrix_work)
+
+      if (allocated(channel_idx%index_x)) deallocate(channel_idx%index_x)
+      if (allocated(channel_idx%index_y)) deallocate(channel_idx%index_y)
+      if (allocated(eigenvalues)) deallocate(eigenvalues)
+      if (allocated(preconditioner_factors)) deallocate(preconditioner_factors)
+      if (allocated(kinetic_matrix_work)) deallocate(kinetic_matrix_work)
+   end subroutine debug_solve_lower_block
 
    subroutine apply_scattering_operator (x,y,operator_data,eigenvalues,preconditioner_factors,kinetic_matrix,options)
       implicit none

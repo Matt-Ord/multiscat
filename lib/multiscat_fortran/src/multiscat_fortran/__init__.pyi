@@ -45,6 +45,22 @@ def get_abc_arrays(
 ) -> tuple[
     NDArray[np.complex128], NDArray[np.complex128], NDArray[np.complex128], int
 ]: ...
+def debug_build_preconditioner_fortran(
+    potential_values: NDArray[np.complex128],
+    perpendicular_kinetic_difference: NDArray[np.float64],
+    parallel_kinetic_energy: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], int]: ...
+def debug_apply_upper_block_fortran(
+    potential_values: NDArray[np.complex128],
+    state_in: NDArray[np.complex128],
+) -> tuple[NDArray[np.complex128], int]: ...
+def debug_solve_lower_block_fortran(
+    potential_values: NDArray[np.complex128],
+    wave_c: NDArray[np.complex128],
+    perpendicular_kinetic_difference: NDArray[np.float64],
+    parallel_kinetic_energy: NDArray[np.float64],
+    state_in: NDArray[np.complex128],
+) -> tuple[NDArray[np.complex128], int]: ...
 
 __all__ = [
     "run_multiscat_fortran",
@@ -52,4 +68,7 @@ __all__ = [
     "get_parallel_kinetic_energy",
     "get_lobatto_weights",
     "get_abc_arrays",
+    "debug_build_preconditioner_fortran",
+    "debug_apply_upper_block_fortran",
+    "debug_solve_lower_block_fortran",
 ]

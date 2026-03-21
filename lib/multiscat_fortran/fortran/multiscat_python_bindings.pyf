@@ -59,5 +59,41 @@ python module _multiscat_f2py
             complex*16 dimension(nx*ny), intent(out) :: wave_c
             integer intent(out) :: ierr
         end subroutine get_abc_arrays
+
+        subroutine debug_build_preconditioner_fortran(nkx, nky, nz, potential_values, perpendicular_kinetic_difference, parallel_kinetic_energy, eigenvalues, preconditioner_factors, eigenvectors, ierr)
+            integer intent(hide), depend(potential_values) :: nkx = shape(potential_values, 0)
+            integer intent(hide), depend(potential_values) :: nky = shape(potential_values, 1)
+            integer intent(hide), depend(potential_values) :: nz = shape(potential_values, 2)
+            complex*16 dimension(nkx, nky, nz), intent(in) :: potential_values
+            double precision dimension(nkx, nky), intent(in) :: perpendicular_kinetic_difference
+            double precision dimension(nz, nz), intent(in) :: parallel_kinetic_energy
+            double precision dimension(nz), intent(out) :: eigenvalues
+            double precision dimension(nz, nkx*nky), intent(out) :: preconditioner_factors
+            double precision dimension(nz, nz), intent(out) :: eigenvectors
+            integer intent(out) :: ierr
+        end subroutine debug_build_preconditioner_fortran
+
+        subroutine debug_apply_upper_block_fortran(nkx, nky, nz, potential_values, state_in, state_out, ierr)
+            integer intent(hide), depend(potential_values) :: nkx = shape(potential_values, 0)
+            integer intent(hide), depend(potential_values) :: nky = shape(potential_values, 1)
+            integer intent(hide), depend(potential_values) :: nz = shape(potential_values, 2)
+            complex*16 dimension(nkx, nky, nz), intent(in) :: potential_values
+            complex*16 dimension(nz, nkx*nky), intent(in) :: state_in
+            complex*16 dimension(nz, nkx*nky), intent(out) :: state_out
+            integer intent(out) :: ierr
+        end subroutine debug_apply_upper_block_fortran
+
+        subroutine debug_solve_lower_block_fortran(nkx, nky, nz, potential_values, wave_c, perpendicular_kinetic_difference, parallel_kinetic_energy, state_in, state_out, ierr)
+            integer intent(hide), depend(potential_values) :: nkx = shape(potential_values, 0)
+            integer intent(hide), depend(potential_values) :: nky = shape(potential_values, 1)
+            integer intent(hide), depend(potential_values) :: nz = shape(potential_values, 2)
+            complex*16 dimension(nkx, nky, nz), intent(in) :: potential_values
+            complex*16 dimension(nkx*nky), intent(in) :: wave_c
+            double precision dimension(nkx, nky), intent(in) :: perpendicular_kinetic_difference
+            double precision dimension(nz, nz), intent(in) :: parallel_kinetic_energy
+            complex*16 dimension(nz, nkx*nky), intent(in) :: state_in
+            complex*16 dimension(nz, nkx*nky), intent(out) :: state_out
+            integer intent(out) :: ierr
+        end subroutine debug_solve_lower_block_fortran
     end interface
 end python module _multiscat_f2py

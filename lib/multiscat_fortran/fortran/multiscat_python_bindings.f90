@@ -229,3 +229,114 @@ subroutine get_abc_arrays( &
       zmin, zmax, perpendicular_kinetic_difference, n_z_points, wave_a, wave_b, wave_c &
       )
 end subroutine get_abc_arrays
+
+subroutine debug_build_preconditioner_fortran( &
+   nkx, &
+   nky, &
+   nz, &
+   potential_values, &
+   perpendicular_kinetic_difference, &
+   parallel_kinetic_energy, &
+   eigenvalues, &
+   preconditioner_factors, &
+   eigenvectors, &
+   ierr &
+   )
+   use, intrinsic :: iso_fortran_env, only: real64
+   use multiscat_gmres, only: debug_build_preconditioner
+   implicit none
+
+   integer, parameter :: dp = real64
+
+   integer, intent(in) :: nkx
+   integer, intent(in) :: nky
+   integer, intent(in) :: nz
+   complex(dp), intent(in) :: potential_values(nkx, nky, nz)
+   real(dp), intent(in) :: perpendicular_kinetic_difference(nkx, nky)
+   real(dp), intent(in) :: parallel_kinetic_energy(nz, nz)
+   real(dp), intent(out) :: eigenvalues(nz)
+   real(dp), intent(out) :: preconditioner_factors(nz, nkx * nky)
+   real(dp), intent(out) :: eigenvectors(nz, nz)
+   integer, intent(out) :: ierr
+
+   if (nkx .le. 0 .or. nky .le. 0 .or. nz .le. 0) then
+      ierr = 1
+      return
+   end if
+
+   call debug_build_preconditioner( &
+      potential_values, perpendicular_kinetic_difference, parallel_kinetic_energy, &
+      eigenvalues, preconditioner_factors, eigenvectors, ierr &
+      )
+end subroutine debug_build_preconditioner_fortran
+
+subroutine debug_apply_upper_block_fortran( &
+   nkx, &
+   nky, &
+   nz, &
+   potential_values, &
+   state_in, &
+   state_out, &
+   ierr &
+   )
+   use, intrinsic :: iso_fortran_env, only: real64
+   use multiscat_gmres, only: debug_apply_upper_block
+   implicit none
+
+   integer, parameter :: dp = real64
+
+   integer, intent(in) :: nkx
+   integer, intent(in) :: nky
+   integer, intent(in) :: nz
+   complex(dp), intent(in) :: potential_values(nkx, nky, nz)
+   complex(dp), intent(in) :: state_in(nz, nkx * nky)
+   complex(dp), intent(out) :: state_out(nz, nkx * nky)
+   integer, intent(out) :: ierr
+
+   if (nkx .le. 0 .or. nky .le. 0 .or. nz .le. 0) then
+      ierr = 1
+      return
+   end if
+
+   call debug_apply_upper_block(potential_values, state_in, state_out, ierr)
+end subroutine debug_apply_upper_block_fortran
+
+subroutine debug_solve_lower_block_fortran( &
+   nkx, &
+   nky, &
+   nz, &
+   potential_values, &
+   wave_c, &
+   perpendicular_kinetic_difference, &
+   parallel_kinetic_energy, &
+   state_in, &
+   state_out, &
+   ierr &
+   )
+   use, intrinsic :: iso_fortran_env, only: real64
+   use multiscat_gmres, only: debug_solve_lower_block
+   implicit none
+
+   integer, parameter :: dp = real64
+
+   integer, intent(in) :: nkx
+   integer, intent(in) :: nky
+   integer, intent(in) :: nz
+   complex(dp), intent(in) :: potential_values(nkx, nky, nz)
+   complex(dp), intent(in) :: wave_c(nkx * nky)
+   real(dp), intent(in) :: perpendicular_kinetic_difference(nkx, nky)
+   real(dp), intent(in) :: parallel_kinetic_energy(nz, nz)
+   complex(dp), intent(in) :: state_in(nz, nkx * nky)
+   complex(dp), intent(out) :: state_out(nz, nkx * nky)
+   integer, intent(out) :: ierr
+
+   if (nkx .le. 0 .or. nky .le. 0 .or. nz .le. 0) then
+      ierr = 1
+      return
+   end if
+
+   call debug_solve_lower_block( &
+      potential_values, wave_c, perpendicular_kinetic_difference, parallel_kinetic_energy, &
+      state_in, state_out, ierr &
+      )
+end subroutine debug_solve_lower_block_fortran
