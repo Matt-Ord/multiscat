@@ -32,14 +32,14 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
-    _apply_upper_block_scipy,
-    _build_preconditioner_scipy,
+    _apply_upper_block,
+    _build_lower_block_factors,
     _build_scipy_operator_data,
     _condition_parameters,
     _get_parallel_kinetic_energy,
     _get_perpendicular_kinetic_difference,
     _potential_parameters,
-    _solve_lower_block_scipy,
+    _solve_lower_block,
     get_scattering_matrix,
 )
 from multiscat.multiscat import (
@@ -341,8 +341,8 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         _wave_c,
     ) = _fortran_backend_inputs(condition)
 
-    eigenvalues_python, preconditioner_factors_python, eigenvectors_python = (
-        _build_preconditioner_scipy(
+    eigenvalues_python, lower_block_factors_python, eigenvectors_python = (
+        _build_lower_block_factors(
             potential_values,
             perpendicular_kinetic_difference,
             parallel_kinetic_energy,
@@ -374,7 +374,7 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         atol=1e-10,
     )
     np.testing.assert_allclose(
-        preconditioner_factors_python,
+        lower_block_factors_python,
         preconditioner_factors,
         rtol=1e-9,
         atol=1e-10,
@@ -462,7 +462,7 @@ def test_scipy_upper_block_matches_fortran_debug() -> None:
     )
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _apply_upper_block_scipy(state_in, operator_data)
+    state_out_python = _apply_upper_block(state_in, operator_data)
     np.testing.assert_allclose(
         state_out_python,
         state_out_fortran,
@@ -503,7 +503,7 @@ def test_scipy_lower_block_matches_fortran_debug() -> None:
     )
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _solve_lower_block_scipy(state_in, operator_data)
+    state_out_python = _solve_lower_block(state_in, operator_data)
     np.testing.assert_allclose(
         state_out_python,
         state_out_fortran,
