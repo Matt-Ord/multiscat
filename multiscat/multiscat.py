@@ -6,7 +6,7 @@ import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
 from multiscat_fortran import (
-    debug_build_preconditioner_fortran,
+    debug_diagonalize_real_symmetric_fortran,
     get_abc_arrays,
     get_parallel_kinetic_energy,
     get_perpendicular_kinetic_difference,
@@ -429,14 +429,57 @@ def get_scattering_matrix_from_state[
 
 def get_scattered_intensity(
     scattered_state_dense: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
-    wave_a_dense: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    wave_b_dense: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    wave_a: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    wave_b: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     """Recover per-channel intensities from the optimized scattered state."""
     surface_state = scattered_state_dense[:, :, -1]
-    scattered_amplitude = 2.0j * wave_b_dense * surface_state
-    scattered_amplitude[0, 0] = wave_a_dense[0, 0] + scattered_amplitude[0, 0]
-    return np.abs(scattered_amplitude) ** 2
+    scattered_state = 2.0j * wave_b * surface_state
+    incoming_state = wave_a[0, 0]
+    scattered_state[0, 0] += incoming_state
+    return np.abs(scattered_state) ** 2
+
+
+def _build_preconditioner_scipy(
+    potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    perpendicular_kinetic_difference: np.ndarray[
+        tuple[int, int],
+        np.dtype[np.float64],
+    ],
+    parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> tuple[
+    np.ndarray[tuple[int], np.dtype[np.float64]],
+    np.ndarray[Any, np.dtype[np.float64]],
+    np.ndarray[Any, np.dtype[np.float64]],
+]:
+    """Python/NumPy equivalent of debug_build_preconditioner_fortran."""
+    nkx, nky, nz = potential_values.shape
+    channel_count = nkx * nky
+    kinetic_matrix = parallel_kinetic_energy.copy()
+    kinetic_matrix[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
+
+    eigenvalues, eigenvectors = debug_diagonalize_real_symmetric_fortran(
+        kinetic_matrix,
+    )
+
+    mode_x = np.arange(nkx)
+    mode_x = np.where(mode_x > ((nkx - 1) // 2), mode_x - nkx, mode_x)
+    mode_y = np.arange(nky)
+    mode_y = np.where(mode_y > ((nky - 1) // 2), mode_y - nky, mode_y)
+    idx_x = np.repeat(mode_x, nky)
+    idx_y = np.tile(mode_y, nkx)
+    channel_energy = perpendicular_kinetic_difference[idx_x % nkx, idx_y % nky]
+
+    g = np.empty((nz, channel_count), dtype=np.float64)
+    preconditioner_factors = np.zeros((nz, channel_count), dtype=np.float64)
+    for j in range(channel_count):
+        g[:, j] = eigenvectors[nz - 1, :] / (channel_energy[j] + eigenvalues)
+        preconditioner_factors[:, j] = np.einsum("ki,i->k", eigenvectors, g[:, j])
+    return (
+        np.asarray(eigenvalues, dtype=np.float64),
+        np.asarray(preconditioner_factors, dtype=np.float64),
+        np.asarray(eigenvectors, dtype=np.float64),
+    )
 
 
 @dataclass(frozen=True)
@@ -460,7 +503,7 @@ def _build_scipy_operator_data(
         tuple[int, int],
         np.dtype[np.float64],
     ],
-    wave_c_dense: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    wave_c: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
 ) -> _ScipyOperatorData:
     nkx, nky, nz = potential_values.shape
@@ -477,12 +520,11 @@ def _build_scipy_operator_data(
     diff_y = (idx_y[:, np.newaxis] - idx_y[np.newaxis, :]) % nky
     potential_pairs = potential_values[diff_x, diff_y, :]
 
-    preconditioner_raw = debug_build_preconditioner_fortran(
+    eigenvalues, preconditioner_factors, eigenvectors = _build_preconditioner_scipy(
         potential_values=potential_values,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
         parallel_kinetic_energy=parallel_kinetic_energy,
     )
-    eigenvalues, preconditioner_factors, eigenvectors = preconditioner_raw[:3]
 
     channel_energy = perpendicular_kinetic_difference[idx_x % nkx, idx_y % nky]
 
@@ -497,7 +539,7 @@ def _build_scipy_operator_data(
         eigenvectors=eigenvectors,
         channel_energy=channel_energy,
         preconditioner_factors=preconditioner_factors,
-        wave_c=wave_c_dense.ravel(),
+        wave_c=wave_c.ravel(),
     )
 
 
@@ -547,8 +589,8 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         tuple[int, int],
         np.dtype[np.float64],
     ],
-    wave_b_dense: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    wave_c_dense: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    wave_b: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    wave_c: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
 ) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
     nkx, nky, nz = potential_values.shape
@@ -556,7 +598,7 @@ def _run_multiscat_scipy(  # noqa: PLR0913
     operator_data = _build_scipy_operator_data(
         potential_values,
         perpendicular_kinetic_difference,
-        wave_c_dense,
+        wave_c,
         parallel_kinetic_energy,
     )
 
@@ -574,18 +616,18 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         return out.T.reshape((-1,))
 
     rhs = np.zeros((nz, channel_count), dtype=np.complex128)
-    rhs[nz - 1, operator_data.specular_channel] = wave_b_dense[0, 0]
+    rhs[nz - 1, operator_data.specular_channel] = wave_b[0, 0]
     rhs = _solve_lower_block_scipy(rhs, operator_data)
 
     linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (nz * channel_count, nz * channel_count),
         _apply_operator,
     )
-    gmres_solver = cast("Any", scipy.sparse.linalg.gmres)  # type: ignore[unknown]
+    # restart should not exceed system dimension.
     krylov_dim = min(max_iterations, nz * channel_count)
     solution, gmres_info = cast(
         "tuple[np.ndarray[Any, np.dtype[np.complex128]], int]",
-        gmres_solver(
+        scipy.sparse.linalg.gmres(  # type: ignore[unknown]
             A=linear_operator,
             b=rhs.T.reshape((-1,)),
             rtol=precision,
@@ -659,7 +701,7 @@ def get_scattering_matrix[
         nz=nz,
     )
 
-    wave_a, wave_b, wave_c, *_ = get_abc_arrays(
+    wave_a, wave_b, wave_c = get_abc_arrays(
         zmin=zmin,
         zmax=zmax,
         nx=nkx,
@@ -667,9 +709,9 @@ def get_scattering_matrix[
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
         n_z_points=nz,
     )
-    wave_a_dense = wave_a.reshape((nkx, nky))
-    wave_b_dense = wave_b.reshape((nkx, nky))
-    wave_c_dense = wave_c.reshape((nkx, nky))
+    wave_a = wave_a.reshape((nkx, nky))
+    wave_b = wave_b.reshape((nkx, nky))
+    wave_c = wave_c.reshape((nkx, nky))
 
     hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
     scaled_potential_values = np.asfortranarray(
@@ -682,9 +724,9 @@ def get_scattering_matrix[
             convergence_significant_figures,
             potential_values=scaled_potential_values,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-            wave_a=wave_a_dense.ravel(),
-            wave_b=wave_b_dense.ravel(),
-            wave_c=wave_c_dense.ravel(),
+            wave_a=wave_a.ravel(),
+            wave_b=wave_b.ravel(),
+            wave_c=wave_c.ravel(),
             parallel_kinetic_energy=parallel_kinetic_energy,
         )
     elif backend == "scipy":
@@ -694,8 +736,8 @@ def get_scattering_matrix[
             config.max_iterations,
             potential_values=scaled_potential_values,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-            wave_b_dense=wave_b_dense,
-            wave_c_dense=wave_c_dense,
+            wave_b=wave_b,
+            wave_c=wave_c,
             parallel_kinetic_energy=parallel_kinetic_energy,
         )
     else:
@@ -704,8 +746,8 @@ def get_scattering_matrix[
 
     channel_intensity_dense = get_scattered_intensity(
         scattered_state_dense,
-        wave_a_dense,
-        wave_b_dense,
+        wave_a,
+        wave_b,
     )
 
     metadata_x01, _ = split_scattering_metadata(condition.metadata)

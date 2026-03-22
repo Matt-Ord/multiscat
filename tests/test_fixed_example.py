@@ -33,6 +33,7 @@ from multiscat.basis import (
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
     _apply_upper_block_scipy,
+    _build_preconditioner_scipy,
     _build_scipy_operator_data,
     _condition_parameters,
     _get_parallel_kinetic_energy,
@@ -61,7 +62,7 @@ MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(
 )
 
 
-def _parse_raw_intensities(output_file: Path) -> dict[tuple[int, int], float]:
+def _parse_raw_intensities_sparse(output_file: Path) -> dict[tuple[int, int], float]:
     # Regex for lines without the '#' prefix: two ints and one float
     pattern = re.compile(
         r"^\s*(-?\d+)\s+(-?\d+)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*",
@@ -89,13 +90,13 @@ def _fft_mode_to_index(mode: int, n: int) -> int:
     return mode if mode >= 0 else n + mode
 
 
-def _parse_raw_intensities_dense(
+def _parse_raw_intensities(
     output_file: Path,
-    nx: int,
-    ny: int,
+    shape: tuple[int, int],
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
+    nx, ny = shape
     intensities = np.zeros((nx, ny), dtype=np.float64)
-    for (hx, ky), value in _parse_raw_intensities(output_file).items():
+    for (hx, ky), value in _parse_raw_intensities_sparse(output_file).items():
         intensities[_fft_mode_to_index(hx, nx), _fft_mode_to_index(ky, ny)] = value
     return intensities
 
@@ -237,12 +238,11 @@ def test_simple_system() -> None:
         msg = f"Intensities sum to {(np.sum(intensities))}, expected 1.0"
         raise AssertionError(msg)
 
-    expected_dense = _parse_raw_intensities_dense(
+    expected = _parse_raw_intensities(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
-        nx,
-        ny,
+        (nx, ny),
     )
-    np.testing.assert_allclose(intensities, expected_dense, rtol=0.0, atol=5e-5)
+    np.testing.assert_allclose(intensities, expected, rtol=0.0, atol=5e-5)
 
 
 def _rotated_example_condition() -> tuple[
@@ -305,12 +305,11 @@ def test_rotated_system() -> None:
         msg = f"Intensities sum to {(np.sum(intensities))}, expected 1.0"
         raise AssertionError(msg)
 
-    expected_dense = _parse_raw_intensities_dense(
+    expected = _parse_raw_intensities(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
-        nx,
-        ny,
+        (nx, ny),
     )
-    np.testing.assert_allclose(intensities, expected_dense, rtol=0.0, atol=5e-5)
+    np.testing.assert_allclose(intensities, expected, rtol=0.0, atol=5e-5)
 
 
 def test_simple_system_scipy_backend() -> None:
@@ -327,12 +326,11 @@ def test_simple_system_scipy_backend() -> None:
         msg = f"Intensities sum to {(np.sum(intensities))}, expected 1.0"
         raise AssertionError(msg)
 
-    expected_dense = _parse_raw_intensities_dense(
+    expected = _parse_raw_intensities(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
-        nx,
-        ny,
+        (nx, ny),
     )
-    np.testing.assert_allclose(intensities, expected_dense, rtol=0.0, atol=5e-5)
+    np.testing.assert_allclose(intensities, expected, rtol=0.0, atol=5e-5)
 
 
 def test_scipy_preconditioner_matches_fortran_debug() -> None:
@@ -343,14 +341,15 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         parallel_kinetic_energy,
         _wave_a,
         _wave_b,
-        wave_c,
+        _wave_c,
     ) = _fortran_backend_inputs(condition)
 
-    operator_data = _build_scipy_operator_data(
-        potential_values,
-        perpendicular_kinetic_difference,
-        wave_c,
-        parallel_kinetic_energy,
+    eigenvalues_python, preconditioner_factors_python, eigenvectors_python = (
+        _build_preconditioner_scipy(
+            potential_values,
+            perpendicular_kinetic_difference,
+            parallel_kinetic_energy,
+        )
     )
 
     eigenvalues_raw, preconditioner_factors_raw, eigenvectors_raw = (
@@ -366,19 +365,19 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
     eigenvectors = np.asarray(eigenvectors_raw, dtype=np.float64)
 
     np.testing.assert_allclose(
-        operator_data.eigenvalues,
+        eigenvalues_python,
         eigenvalues,
         rtol=1e-12,
         atol=1e-12,
     )
     np.testing.assert_allclose(
-        np.abs(operator_data.eigenvectors),
+        np.abs(eigenvectors_python),
         np.abs(eigenvectors),
         rtol=1e-12,
         atol=1e-12,
     )
     np.testing.assert_allclose(
-        operator_data.preconditioner_factors,
+        preconditioner_factors_python,
         preconditioner_factors,
         rtol=1e-12,
         atol=1e-12,

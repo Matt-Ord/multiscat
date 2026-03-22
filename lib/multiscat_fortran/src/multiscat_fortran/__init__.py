@@ -11,6 +11,9 @@ from multiscat_fortran._multiscat_f2py import (
     debug_build_preconditioner_fortran as _debug_build_preconditioner_fortran,  # type: ignore [import]
 )
 from multiscat_fortran._multiscat_f2py import (
+    debug_diagonalize_real_symmetric_fortran as _debug_diagonalize_real_symmetric_fortran,  # type: ignore [import]
+)
+from multiscat_fortran._multiscat_f2py import (
     debug_solve_lower_block_fortran as _debug_solve_lower_block_fortran,  # type: ignore [import]
 )
 from multiscat_fortran._multiscat_f2py import (
@@ -151,6 +154,16 @@ def debug_apply_upper_block_fortran(
     return state_out
 
 
+def debug_diagonalize_real_symmetric_fortran(
+    matrix_in: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    eigenvalues, eigenvectors, ierr = _debug_diagonalize_real_symmetric_fortran(
+        matrix_in,
+    )
+    _raise_fortran_error("debug_diagonalize_real_symmetric_fortran", int(ierr))
+    return eigenvalues, eigenvectors
+
+
 def debug_solve_lower_block_fortran(
     potential_values: NDArray[np.complex128],
     wave_c: NDArray[np.complex128],
@@ -176,6 +189,7 @@ __all__ = [
     "get_lobatto_weights",
     "get_abc_arrays",
     "debug_build_preconditioner_fortran",
+    "debug_diagonalize_real_symmetric_fortran",
     "debug_apply_upper_block_fortran",
     "debug_solve_lower_block_fortran",
 ]
