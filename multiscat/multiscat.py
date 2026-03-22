@@ -480,7 +480,7 @@ def _get_abc_arrays(
     )
 
 
-def _build_preconditioner_scipy(
+def _build_lower_block_factors(
     potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
     perpendicular_kinetic_difference: np.ndarray[
         tuple[int, int],
@@ -509,13 +509,13 @@ def _build_preconditioner_scipy(
     channel_energy = perpendicular_kinetic_difference[idx_x % nkx, idx_y % nky]
 
     g = np.empty((nz, channel_count), dtype=np.float64)
-    preconditioner_factors = np.zeros((nz, channel_count), dtype=np.float64)
+    lower_block_factors = np.zeros((nz, channel_count), dtype=np.float64)
     for j in range(channel_count):
         g[:, j] = eigenvectors[nz - 1, :] / (channel_energy[j] + eigenvalues)
-        preconditioner_factors[:, j] = np.einsum("ki,i->k", eigenvectors, g[:, j])
+        lower_block_factors[:, j] = np.einsum("ki,i->k", eigenvectors, g[:, j])
     return (
         eigenvalues,
-        preconditioner_factors,
+        lower_block_factors,
         eigenvectors,
     )
 
@@ -531,7 +531,7 @@ class _ScipyOperatorData:
     eigenvalues: np.ndarray[Any, np.dtype[np.float64]]
     eigenvectors: np.ndarray[Any, np.dtype[np.float64]]
     channel_energy: np.ndarray[Any, np.dtype[np.float64]]
-    preconditioner_factors: np.ndarray[Any, np.dtype[np.float64]]
+    lower_block_factors: np.ndarray[Any, np.dtype[np.float64]]
     wave_c: np.ndarray[Any, np.dtype[np.complex128]]
 
 
@@ -558,7 +558,7 @@ def _build_scipy_operator_data(
     diff_y = (idx_y[:, np.newaxis] - idx_y[np.newaxis, :]) % nky
     potential_pairs = potential_values[diff_x, diff_y, :]
 
-    eigenvalues, preconditioner_factors, eigenvectors = _build_preconditioner_scipy(
+    eigenvalues, lower_block_factors, eigenvectors = _build_lower_block_factors(
         potential_values=potential_values,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
         parallel_kinetic_energy=parallel_kinetic_energy,
@@ -576,12 +576,12 @@ def _build_scipy_operator_data(
         eigenvalues=eigenvalues,
         eigenvectors=eigenvectors,
         channel_energy=channel_energy,
-        preconditioner_factors=preconditioner_factors,
+        lower_block_factors=lower_block_factors,
         wave_c=wave_c.ravel(),
     )
 
 
-def _apply_upper_block_scipy(
+def _apply_upper_block(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: _ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
@@ -593,7 +593,7 @@ def _apply_upper_block_scipy(
     return result
 
 
-def _solve_lower_block_scipy(
+def _solve_lower_block(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: _ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
@@ -604,10 +604,10 @@ def _solve_lower_block_scipy(
     solved[:, 0] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
 
     denom = 1.0 - (
-        operator_data.preconditioner_factors[nz - 1, 0] * operator_data.wave_c[0]
+        operator_data.lower_block_factors[nz - 1, 0] * operator_data.wave_c[0]
     )
     fac = solved[nz - 1, 0] * operator_data.wave_c[0] / denom
-    solved[:, 0] = solved[:, 0] + (fac * operator_data.preconditioner_factors[:, 0])
+    solved[:, 0] = solved[:, 0] + (fac * operator_data.lower_block_factors[:, 0])
 
     for j in range(1, operator_data.channel_count):
         pairs = operator_data.potential_pairs[j, :j, :]
@@ -618,10 +618,10 @@ def _solve_lower_block_scipy(
         solved[:, j] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
 
         denom = 1.0 - (
-            operator_data.preconditioner_factors[nz - 1, j] * operator_data.wave_c[j]
+            operator_data.lower_block_factors[nz - 1, j] * operator_data.wave_c[j]
         )
         fac = solved[nz - 1, j] * operator_data.wave_c[j] / denom
-        solved[:, j] = solved[:, j] + (fac * operator_data.preconditioner_factors[:, j])
+        solved[:, j] = solved[:, j] + (fac * operator_data.lower_block_factors[:, j])
     return solved
 
 
@@ -648,26 +648,39 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         parallel_kinetic_energy,
     )
 
-    def _apply_operator(
+    def _apply_coupling_solve(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
         state = flat_state.reshape((channel_count, nz)).T
-        upper = _apply_upper_block_scipy(state, operator_data)
-        lower = _solve_lower_block_scipy(upper, operator_data)
-        out = state + lower
-        if gmres_preconditioner_flag == 1:
-            upper = _apply_upper_block_scipy(out, operator_data)
-            lower = _solve_lower_block_scipy(upper, operator_data)
-            out = out - lower
-        return out.T.reshape((-1,))
+        upper = _apply_upper_block(state, operator_data)
+        lower = _solve_lower_block(upper, operator_data)
+        return lower.T.reshape((-1,))
+
+    def _apply_operator(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        return flat_state + _apply_coupling_solve(flat_state)
+
+    def _apply_preconditioner(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        return flat_state - _apply_coupling_solve(flat_state)
 
     rhs = np.zeros((nz, channel_count), dtype=np.complex128)
     rhs[nz - 1, operator_data.specular_channel] = wave_b[0, 0]
-    rhs = _solve_lower_block_scipy(rhs, operator_data)
+    rhs = _solve_lower_block(rhs, operator_data)
 
     linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (nz * channel_count, nz * channel_count),
         _apply_operator,
+    )
+    preconditioner_operator = (
+        scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+            (nz * channel_count, nz * channel_count),
+            _apply_preconditioner,
+        )
+        if gmres_preconditioner_flag == 1
+        else None
     )
     # restart should not exceed system dimension.
     krylov_dim = min(max_iterations, nz * channel_count)  # cspell: disable-line
@@ -679,6 +692,7 @@ def _run_multiscat_scipy(  # noqa: PLR0913
             rtol=precision,
             restart=krylov_dim,  # cspell: disable-line
             maxiter=max_iterations,
+            M=preconditioner_operator,
         ),
     )
 
@@ -690,8 +704,7 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         )
         raise RuntimeError(msg)
 
-    state_solution = solution.reshape((channel_count, nz)).T
-    return state_solution.T.reshape((nkx, nky, nz))
+    return solution.reshape((nkx, nky, nz))
 
 
 def get_scattering_matrix[
