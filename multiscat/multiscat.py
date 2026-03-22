@@ -457,7 +457,7 @@ def _build_preconditioner_scipy(
     kinetic_matrix = parallel_kinetic_energy.copy()
     kinetic_matrix[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
 
-    eigenvalues, eigenvectors = np.linalg.eigh(kinetic_matrix)
+    eigenvalues, eigenvectors = np.linalg.eigh(kinetic_matrix)  # cspell: disable-line
 
     mode_x = np.arange(nkx)
     mode_x = np.where(mode_x > ((nkx - 1) // 2), mode_x - nkx, mode_x)
@@ -473,9 +473,9 @@ def _build_preconditioner_scipy(
         g[:, j] = eigenvectors[nz - 1, :] / (channel_energy[j] + eigenvalues)
         preconditioner_factors[:, j] = np.einsum("ki,i->k", eigenvectors, g[:, j])
     return (
-        np.asarray(eigenvalues, dtype=np.float64),
-        np.asarray(preconditioner_factors, dtype=np.float64),
-        np.asarray(eigenvectors, dtype=np.float64),
+        eigenvalues,
+        preconditioner_factors,
+        eigenvectors,
     )
 
 
@@ -548,8 +548,8 @@ def _apply_upper_block_scipy(
     for j in range(operator_data.channel_count):
         if j + 1 >= operator_data.channel_count:
             continue
-        coeff = operator_data.potential_pairs[j, j + 1 :, :]
-        result[:, j] = np.einsum("ik,ki->k", coeff, state_vector[:, j + 1 :])
+        pairs = operator_data.potential_pairs[j, j + 1 :, :]
+        result[:, j] = np.einsum("ik,ki->k", pairs, state_vector[:, j + 1 :])
     return result
 
 
@@ -561,8 +561,8 @@ def _solve_lower_block_scipy(
     nz = operator_data.nz
     for j in range(operator_data.channel_count):
         if j > 0:
-            coeff = operator_data.potential_pairs[j, :j, :]
-            solved[:, j] -= np.einsum("ik,ki->k", coeff, solved[:, :j])
+            pairs = operator_data.potential_pairs[j, :j, :]
+            solved[:, j] -= np.einsum("ik,ki->k", pairs, solved[:, :j])
 
         y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, j])
         y = y / (operator_data.channel_energy[j] + operator_data.eigenvalues)
@@ -621,14 +621,14 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         _apply_operator,
     )
     # restart should not exceed system dimension.
-    krylov_dim = min(max_iterations, nz * channel_count)
+    krylov_dim = min(max_iterations, nz * channel_count)  # cspell: disable-line
     solution, gmres_info = cast(
         "tuple[np.ndarray[Any, np.dtype[np.complex128]], int]",
         scipy.sparse.linalg.gmres(  # type: ignore[unknown]
             A=linear_operator,
             b=rhs.T.reshape((-1,)),
             rtol=precision,
-            restart=krylov_dim,
+            restart=krylov_dim,  # cspell: disable-line
             maxiter=max_iterations,
         ),
     )
@@ -637,7 +637,7 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         msg = (
             "SciPy GMRES did not converge "
             f"(info={gmres_info}, max_iterations={max_iterations}, "
-            f"restart={krylov_dim})."
+            f"restart={krylov_dim})."  # cspell: disable-line
         )
         raise RuntimeError(msg)
 

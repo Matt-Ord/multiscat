@@ -73,14 +73,6 @@ python module _multiscat_f2py
             integer intent(out) :: ierr
         end subroutine debug_build_preconditioner_fortran
 
-        subroutine debug_diagonalize_real_symmetric_fortran(nz, matrix_in, eigenvalues, eigenvectors, ierr)
-            integer intent(hide), depend(matrix_in) :: nz = shape(matrix_in, 0)
-            double precision dimension(nz, nz), intent(in) :: matrix_in
-            double precision dimension(nz), intent(out) :: eigenvalues
-            double precision dimension(nz, nz), intent(out) :: eigenvectors
-            integer intent(out) :: ierr
-        end subroutine debug_diagonalize_real_symmetric_fortran
-
         subroutine debug_apply_upper_block_fortran(nkx, nky, nz, potential_values, state_in, state_out, ierr)
             integer intent(hide), depend(potential_values) :: nkx = shape(potential_values, 0)
             integer intent(hide), depend(potential_values) :: nky = shape(potential_values, 1)

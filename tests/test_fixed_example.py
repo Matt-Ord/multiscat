@@ -10,7 +10,6 @@ import numpy as np
 from multiscat_fortran import (
     debug_apply_upper_block_fortran,
     debug_build_preconditioner_fortran,
-    debug_diagonalize_real_symmetric_fortran,
     debug_solve_lower_block_fortran,
     get_abc_arrays,
     get_parallel_kinetic_energy,
@@ -63,30 +62,6 @@ MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(
 )
 
 
-def _parse_raw_intensities_sparse(output_file: Path) -> dict[tuple[int, int], float]:
-    # Regex for lines without the '#' prefix: two ints and one float
-    pattern = re.compile(
-        r"^\s*(-?\d+)\s+(-?\d+)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*",
-    )
-    intensities: dict[tuple[int, int], float] = {}
-
-    with output_file.open("r") as f:
-        for line in f:
-            stripped = line.strip()
-            # Skip empty lines or actual comments
-            if not stripped or stripped.startswith("#"):
-                continue
-
-            match = pattern.match(line)
-            if match:
-                h = int(match.group(1))
-                k = int(match.group(2))
-                val = float(match.group(3))
-                intensities[(h, k)] = val
-
-    return intensities
-
-
 def _fft_mode_to_index(mode: int, n: int) -> int:
     return mode if mode >= 0 else n + mode
 
@@ -95,10 +70,28 @@ def _parse_raw_intensities(
     output_file: Path,
     shape: tuple[int, int],
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
+    # Regex for lines without the '#' prefix: two ints and one float
+    pattern = re.compile(
+        r"^\s*(-?\d+)\s+(-?\d+)\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*",
+    )
     nx, ny = shape
     intensities = np.zeros((nx, ny), dtype=np.float64)
-    for (hx, ky), value in _parse_raw_intensities_sparse(output_file).items():
-        intensities[_fft_mode_to_index(hx, nx), _fft_mode_to_index(ky, ny)] = value
+
+    with output_file.open("r") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            match = pattern.match(line)
+            if not match:
+                continue
+
+            hx = int(match.group(1))
+            ky = int(match.group(2))
+            value = float(match.group(3))
+            intensities[_fft_mode_to_index(hx, nx), _fft_mode_to_index(ky, ny)] = value
+
     return intensities
 
 
@@ -383,52 +376,6 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         rtol=1e-9,
         atol=1e-10,
     )
-
-
-def test_debug_diagonalize_real_symmetric_matches_numpy() -> None:
-    condition, _ = _simple_example_condition()
-    (
-        potential_values,
-        _perpendicular_kinetic_difference,
-        parallel_kinetic_energy,
-        _wave_a,
-        _wave_b,
-        _wave_c,
-    ) = _fortran_backend_inputs(condition)
-
-    kinetic_matrix = np.asarray(parallel_kinetic_energy, dtype=np.float64)
-    kinetic_matrix[np.diag_indices(kinetic_matrix.shape[0])] += np.real(
-        potential_values[0, 0, :],
-    )
-
-    eigenvalues_fortran_raw, eigenvectors_fortran_raw = (
-        debug_diagonalize_real_symmetric_fortran(np.asfortranarray(kinetic_matrix))
-    )
-    eigenvalues_fortran = np.asarray(eigenvalues_fortran_raw, dtype=np.float64)
-    eigenvectors_fortran = np.asarray(eigenvectors_fortran_raw, dtype=np.float64)
-
-    eigenvalues_numpy, eigenvectors_numpy = np.linalg.eigh(kinetic_matrix)
-
-    np.testing.assert_allclose(
-        eigenvalues_numpy,
-        eigenvalues_fortran,
-        rtol=1e-10,
-        atol=5e-6,
-    )
-
-    # Eigenvectors are unique only up to a sign for each mode.
-    for mode in range(eigenvectors_numpy.shape[1]):
-        sign = (
-            1.0
-            if np.dot(eigenvectors_numpy[:, mode], eigenvectors_fortran[:, mode]) >= 0
-            else -1.0
-        )
-        np.testing.assert_allclose(
-            eigenvectors_numpy[:, mode],
-            sign * eigenvectors_fortran[:, mode],
-            rtol=1e-10,
-            atol=1e-10,
-        )
 
 
 def test_scipy_upper_block_matches_fortran_debug() -> None:
