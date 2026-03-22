@@ -6,7 +6,6 @@ import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
 from multiscat_fortran import (
-    debug_diagonalize_real_symmetric_fortran,
     get_abc_arrays,
     get_parallel_kinetic_energy,
     get_perpendicular_kinetic_difference,
@@ -458,9 +457,7 @@ def _build_preconditioner_scipy(
     kinetic_matrix = parallel_kinetic_energy.copy()
     kinetic_matrix[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
 
-    eigenvalues, eigenvectors = debug_diagonalize_real_symmetric_fortran(
-        kinetic_matrix,
-    )
+    eigenvalues, eigenvectors = np.linalg.eigh(kinetic_matrix)
 
     mode_x = np.arange(nkx)
     mode_x = np.where(mode_x > ((nkx - 1) // 2), mode_x - nkx, mode_x)
