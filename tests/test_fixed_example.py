@@ -32,15 +32,18 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
-    _apply_upper_block_scipy,
-    _build_preconditioner_scipy,
+    _apply_upper_block,
+    _build_lower_block_factors,
     _build_scipy_operator_data,
     _condition_parameters,
     _get_parallel_kinetic_energy,
     _get_perpendicular_kinetic_difference,
     _potential_parameters,
-    _solve_lower_block_scipy,
+    _solve_lower_block,
     get_scattering_matrix,
+)
+from multiscat.multiscat import (
+    _get_abc_arrays as _get_abc_arrays_python,
 )
 
 if TYPE_CHECKING:
@@ -338,8 +341,8 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         _wave_c,
     ) = _fortran_backend_inputs(condition)
 
-    eigenvalues_python, preconditioner_factors_python, eigenvectors_python = (
-        _build_preconditioner_scipy(
+    eigenvalues_python, lower_block_factors_python, eigenvectors_python = (
+        _build_lower_block_factors(
             potential_values,
             perpendicular_kinetic_difference,
             parallel_kinetic_energy,
@@ -371,10 +374,62 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         atol=1e-10,
     )
     np.testing.assert_allclose(
-        preconditioner_factors_python,
+        lower_block_factors_python,
         preconditioner_factors,
         rtol=1e-9,
         atol=1e-10,
+    )
+
+
+def test_python_abc_arrays_match_fortran() -> None:
+    condition, _ = _simple_example_condition()
+    (
+        _nkx,
+        _nky,
+        nz,
+        _unit_cell_ax,
+        _unit_cell_ay,
+        _unit_cell_bx,
+        _unit_cell_by,
+        zmin,
+        zmax,
+        _potential_values,
+    ) = _potential_parameters(condition.potential)
+
+    (
+        _scaled_potential_values,
+        perpendicular_kinetic_difference,
+        _parallel_kinetic_energy,
+        wave_a_fortran,
+        wave_b_fortran,
+        wave_c_fortran,
+    ) = _fortran_backend_inputs(condition)
+
+    wave_a_python, wave_b_python, wave_c_python = _get_abc_arrays_python(
+        zmin=zmin,
+        zmax=zmax,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+        n_z_points=nz,
+    )
+
+    shape = perpendicular_kinetic_difference.shape
+    np.testing.assert_allclose(
+        wave_a_python,
+        np.asarray(wave_a_fortran, dtype=np.complex128).reshape(shape),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        wave_b_python,
+        np.asarray(wave_b_fortran, dtype=np.complex128).reshape(shape),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        wave_c_python,
+        np.asarray(wave_c_fortran, dtype=np.complex128).reshape(shape),
+        rtol=1e-12,
+        atol=1e-12,
     )
 
 
@@ -407,7 +462,7 @@ def test_scipy_upper_block_matches_fortran_debug() -> None:
     )
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _apply_upper_block_scipy(state_in, operator_data)
+    state_out_python = _apply_upper_block(state_in, operator_data)
     np.testing.assert_allclose(
         state_out_python,
         state_out_fortran,
@@ -448,7 +503,7 @@ def test_scipy_lower_block_matches_fortran_debug() -> None:
     )
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _solve_lower_block_scipy(state_in, operator_data)
+    state_out_python = _solve_lower_block(state_in, operator_data)
     np.testing.assert_allclose(
         state_out_python,
         state_out_fortran,
