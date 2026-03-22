@@ -6,7 +6,6 @@ import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
 from multiscat_fortran import (
-    get_abc_arrays,
     get_parallel_kinetic_energy,
     get_perpendicular_kinetic_difference,
     run_multiscat_fortran,
@@ -439,6 +438,50 @@ def get_scattered_intensity(
     return np.abs(scattered_state) ** 2
 
 
+def _get_abc_arrays(
+    zmin: float,
+    zmax: float,
+    perpendicular_kinetic_difference: np.ndarray[
+        tuple[int, int],
+        np.dtype[np.floating],
+    ],
+    n_z_points: int,
+) -> tuple[
+    np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+]:
+    nkx, nky = perpendicular_kinetic_difference.shape
+    channel_energy = perpendicular_kinetic_difference.ravel(order="C")
+    dk = np.sqrt(np.abs(channel_energy))
+
+    wave_a = np.zeros(channel_energy.shape, dtype=np.complex128)
+    wave_b = np.zeros(channel_energy.shape, dtype=np.complex128)
+    wave_c = np.zeros(channel_energy.shape, dtype=np.complex128)
+
+    open_channel = channel_energy < 0.0
+    if np.any(open_channel):
+        theta = dk[open_channel] * zmax
+        wave_a[open_channel] = np.cos(2.0 * theta) - 1j * np.sin(2.0 * theta)
+        wave_b[open_channel] = np.sqrt(dk[open_channel]) * (
+            np.cos(theta) - 1j * np.sin(theta)
+        )
+        wave_c[open_channel] = 1j * dk[open_channel]
+
+    wave_c[~open_channel] = -dk[~open_channel]
+
+    node_count = n_z_points + 1
+    endpoint_weight = np.sqrt((zmax - zmin) / (node_count * (node_count - 1)))
+    wave_b = wave_b / endpoint_weight
+    wave_c = wave_c / (endpoint_weight**2)
+
+    return (
+        wave_a.reshape((nkx, nky), order="C"),
+        wave_b.reshape((nkx, nky), order="C"),
+        wave_c.reshape((nkx, nky), order="C"),
+    )
+
+
 def _build_preconditioner_scipy(
     potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
     perpendicular_kinetic_difference: np.ndarray[
@@ -671,7 +714,9 @@ def get_scattering_matrix[
     np.dtype[np.complex128],
 ]:
     """Run Multiscat through the f2py native binding."""
-    mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(condition)
+    mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(
+        condition,
+    )
     (
         gmres_preconditioner_flag,
         convergence_significant_figures,
@@ -688,7 +733,6 @@ def get_scattering_matrix[
         zmax,
         potential_values,
     ) = _potential_parameters(condition.potential)
-
     perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
         incident_kx,
         incident_ky,
@@ -706,17 +750,12 @@ def get_scattering_matrix[
         nz=nz,
     )
 
-    wave_a, wave_b, wave_c = get_abc_arrays(
+    wave_a, wave_b, wave_c = _get_abc_arrays(
         zmin=zmin,
         zmax=zmax,
-        nx=nkx,
-        ny=nky,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
         n_z_points=nz,
     )
-    wave_a = wave_a.reshape((nkx, nky))
-    wave_b = wave_b.reshape((nkx, nky))
-    wave_c = wave_c.reshape((nkx, nky))
 
     hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
     scaled_potential_values = np.asfortranarray(
