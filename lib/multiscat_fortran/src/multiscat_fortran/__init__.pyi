@@ -45,9 +45,6 @@ def debug_build_preconditioner_fortran(
     perpendicular_kinetic_difference: NDArray[np.float64],
     parallel_kinetic_energy: NDArray[np.float64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]: ...
-def debug_diagonalize_real_symmetric_fortran(
-    matrix_in: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]: ...
 def debug_apply_upper_block_fortran(
     potential_values: NDArray[np.complex128],
     state_in: NDArray[np.complex128],
@@ -67,7 +64,6 @@ __all__ = [
     "get_lobatto_weights",
     "get_abc_arrays",
     "debug_build_preconditioner_fortran",
-    "debug_diagonalize_real_symmetric_fortran",
     "debug_apply_upper_block_fortran",
     "debug_solve_lower_block_fortran",
 ]

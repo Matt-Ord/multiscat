@@ -270,45 +270,6 @@ subroutine debug_build_preconditioner_fortran( &
       )
 end subroutine debug_build_preconditioner_fortran
 
-subroutine debug_diagonalize_real_symmetric_fortran( &
-   nz, &
-   matrix_in, &
-   eigenvalues, &
-   eigenvectors, &
-   ierr &
-   )
-   use, intrinsic :: iso_fortran_env, only: real64
-   implicit none
-
-   integer, parameter :: dp = real64
-
-   integer, intent(in) :: nz
-   real(dp), intent(in) :: matrix_in(nz, nz)
-   real(dp), intent(out) :: eigenvalues(nz)
-   real(dp), intent(out) :: eigenvectors(nz, nz)
-   integer, intent(out) :: ierr
-
-   real(dp), allocatable :: fv1(:)
-   integer :: alloc_status
-   external :: rs
-
-   if (nz .le. 0) then
-      ierr = 1
-      return
-   end if
-
-   allocate(fv1(nz), stat=alloc_status)
-   if (alloc_status /= 0) then
-      ierr = 4
-      return
-   end if
-
-   eigenvectors = matrix_in
-   call rs(nz, nz, eigenvectors, eigenvalues, eigenvectors, fv1, ierr)
-
-   if (allocated(fv1)) deallocate(fv1)
-end subroutine debug_diagonalize_real_symmetric_fortran
-
 subroutine debug_apply_upper_block_fortran( &
    nkx, &
    nky, &
