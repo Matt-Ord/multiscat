@@ -545,11 +545,10 @@ def _apply_upper_block_scipy(
     operator_data: _ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     result = np.zeros(state_vector.shape, dtype=np.complex128)
-    for j in range(operator_data.channel_count):
-        if j + 1 >= operator_data.channel_count:
-            continue
-        pairs = operator_data.potential_pairs[j, j + 1 :, :]
-        result[:, j] = np.einsum("ik,ki->k", pairs, state_vector[:, j + 1 :])
+    for j in range(1, operator_data.channel_count):
+        j_minus_1 = j - 1
+        pairs = operator_data.potential_pairs[j_minus_1, j:, :]
+        result[:, j_minus_1] = np.einsum("ik,ki->k", pairs, state_vector[:, j:])
     return result
 
 
@@ -559,10 +558,19 @@ def _solve_lower_block_scipy(
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     solved = state_vector.copy()
     nz = operator_data.nz
-    for j in range(operator_data.channel_count):
-        if j > 0:
-            pairs = operator_data.potential_pairs[j, :j, :]
-            solved[:, j] -= np.einsum("ik,ki->k", pairs, solved[:, :j])
+    y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, 0])
+    y = y / (operator_data.channel_energy[0] + operator_data.eigenvalues)
+    solved[:, 0] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
+
+    denom = 1.0 - (
+        operator_data.preconditioner_factors[nz - 1, 0] * operator_data.wave_c[0]
+    )
+    fac = solved[nz - 1, 0] * operator_data.wave_c[0] / denom
+    solved[:, 0] = solved[:, 0] + (fac * operator_data.preconditioner_factors[:, 0])
+
+    for j in range(1, operator_data.channel_count):
+        pairs = operator_data.potential_pairs[j, :j, :]
+        solved[:, j] -= np.einsum("ik,ki->k", pairs, solved[:, :j])
 
         y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, j])
         y = y / (operator_data.channel_energy[j] + operator_data.eigenvalues)
