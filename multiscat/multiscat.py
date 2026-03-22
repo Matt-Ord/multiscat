@@ -457,7 +457,6 @@ def _get_abc_arrays(
 
     wave_a = np.zeros(channel_energy.shape, dtype=np.complex128)
     wave_b = np.zeros(channel_energy.shape, dtype=np.complex128)
-    wave_c = np.zeros(channel_energy.shape, dtype=np.complex128)
 
     open_channel = channel_energy < 0.0
     if np.any(open_channel):
@@ -466,9 +465,8 @@ def _get_abc_arrays(
         wave_b[open_channel] = np.sqrt(dk[open_channel]) * (
             np.cos(theta) - 1j * np.sin(theta)
         )
-        wave_c[open_channel] = 1j * dk[open_channel]
 
-    wave_c[~open_channel] = -dk[~open_channel]
+    wave_c = 1j * np.emath.sqrt(-channel_energy)
 
     node_count = n_z_points + 1
     endpoint_weight = np.sqrt((zmax - zmin) / (node_count * (node_count - 1)))
