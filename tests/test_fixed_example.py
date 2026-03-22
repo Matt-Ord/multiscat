@@ -42,6 +42,9 @@ from multiscat.multiscat import (
     _solve_lower_block_scipy,
     get_scattering_matrix,
 )
+from multiscat.multiscat import (
+    _get_abc_arrays as _get_abc_arrays_python,
+)
 
 if TYPE_CHECKING:
     from slate_core.metadata import AxisDirections, LobattoSpacedLengthMetadata
@@ -375,6 +378,58 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         preconditioner_factors,
         rtol=1e-9,
         atol=1e-10,
+    )
+
+
+def test_python_abc_arrays_match_fortran() -> None:
+    condition, _ = _simple_example_condition()
+    (
+        _nkx,
+        _nky,
+        nz,
+        _unit_cell_ax,
+        _unit_cell_ay,
+        _unit_cell_bx,
+        _unit_cell_by,
+        zmin,
+        zmax,
+        _potential_values,
+    ) = _potential_parameters(condition.potential)
+
+    (
+        _scaled_potential_values,
+        perpendicular_kinetic_difference,
+        _parallel_kinetic_energy,
+        wave_a_fortran,
+        wave_b_fortran,
+        wave_c_fortran,
+    ) = _fortran_backend_inputs(condition)
+
+    wave_a_python, wave_b_python, wave_c_python = _get_abc_arrays_python(
+        zmin=zmin,
+        zmax=zmax,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+        n_z_points=nz,
+    )
+
+    shape = perpendicular_kinetic_difference.shape
+    np.testing.assert_allclose(
+        wave_a_python,
+        np.asarray(wave_a_fortran, dtype=np.complex128).reshape(shape),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        wave_b_python,
+        np.asarray(wave_b_fortran, dtype=np.complex128).reshape(shape),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        wave_c_python,
+        np.asarray(wave_c_fortran, dtype=np.complex128).reshape(shape),
+        rtol=1e-12,
+        atol=1e-12,
     )
 
 
