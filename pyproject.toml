@@ -57,6 +57,7 @@ typeCheckingMode = "strict"
 include = ["tests", "multiscat", "examples"]
 reportImplicitOverride = true
 
+
 [tool.setuptools.packages.find]
 include = ["multiscat", "multiscat.*"]
 

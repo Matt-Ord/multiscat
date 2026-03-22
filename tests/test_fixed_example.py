@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+# pyright: reportPrivateUsage=false
 import math
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
-import multiscat_fortran as _fortran_bindings
 import numpy as np
 from multiscat_fortran import (
+    debug_apply_upper_block_fortran,
+    debug_build_preconditioner_fortran,
+    debug_solve_lower_block_fortran,
     get_abc_arrays,
     get_parallel_kinetic_energy,
     get_perpendicular_kinetic_difference,
@@ -29,13 +32,13 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
-    _apply_upper_block_scipy,  # pyright: ignore[reportPrivateUsage]
-    _build_scipy_operator_data,  # pyright: ignore[reportPrivateUsage]
-    _condition_parameters,  # pyright: ignore[reportPrivateUsage]
-    _get_parallel_kinetic_energy,  # pyright: ignore[reportPrivateUsage]
-    _get_perpendicular_kinetic_difference,  # pyright: ignore[reportPrivateUsage]
-    _potential_parameters,  # pyright: ignore[reportPrivateUsage]
-    _solve_lower_block_scipy,  # pyright: ignore[reportPrivateUsage]
+    _apply_upper_block_scipy,
+    _build_scipy_operator_data,
+    _condition_parameters,
+    _get_parallel_kinetic_energy,
+    _get_perpendicular_kinetic_difference,
+    _potential_parameters,
+    _solve_lower_block_scipy,
     get_scattering_matrix,
 )
 
@@ -55,19 +58,6 @@ MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(
     height=(1.0 / 1.1) * angstrom,
     offset=3.0 * angstrom,
     beta=0.10,
-)
-
-debug_apply_upper_block_fortran = cast(
-    "Any",
-    _fortran_bindings.debug_apply_upper_block_fortran,  # type: ignore[attr-defined]
-)
-debug_build_preconditioner_fortran = cast(
-    "Any",
-    _fortran_bindings.debug_build_preconditioner_fortran,  # type: ignore[attr-defined]
-)
-debug_solve_lower_block_fortran = cast(
-    "Any",
-    _fortran_bindings.debug_solve_lower_block_fortran,  # type: ignore[attr-defined]
 )
 
 
@@ -99,30 +89,15 @@ def _fft_mode_to_index(mode: int, n: int) -> int:
     return mode if mode >= 0 else n + mode
 
 
-def _spot_errors(
-    intensities: np.ndarray[Any, np.dtype[np.float64 | np.complexfloating]],
-    expected_from_file: dict[tuple[int, int], float],
-    *,
-    abs_tol: float,
-) -> list[tuple[tuple[int, int], float, float, float]]:
-    nx, ny = intensities.shape
-    errors: list[tuple[tuple[int, int], float, float, float]] = []
-    for spot, expected_value in expected_from_file.items():
-        hx, ky = spot
-        ix = _fft_mode_to_index(hx, nx)
-        iy = _fft_mode_to_index(ky, ny)
-        if not (0 <= ix < nx and 0 <= iy < ny):
-            msg = f"Missing diffraction spot {spot}"
-            raise AssertionError(msg)
-
-        actual_value = float(
-            np.real(np.asarray(intensities[ix, iy], dtype=np.complex128)),
-        )
-        diff = abs(actual_value - expected_value)
-        if diff > abs_tol:
-            errors.append((spot, actual_value, expected_value, diff))
-
-    return sorted(errors, key=lambda item: item[3], reverse=True)
+def _parse_raw_intensities_dense(
+    output_file: Path,
+    nx: int,
+    ny: int,
+) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
+    intensities = np.zeros((nx, ny), dtype=np.float64)
+    for (hx, ky), value in _parse_raw_intensities(output_file).items():
+        intensities[_fft_mode_to_index(hx, nx), _fft_mode_to_index(ky, ny)] = value
+    return intensities
 
 
 def _raw_potential_in_input_file_convention(
@@ -207,7 +182,7 @@ def _fortran_backend_inputs(
         potential_values,
     ) = _potential_parameters(condition.potential)
 
-    perpendicular_kinetic_difference_raw, ierr = get_perpendicular_kinetic_difference(
+    perpendicular_kinetic_difference_raw = get_perpendicular_kinetic_difference(
         incident_kx,
         incident_ky,
         incident_kz,
@@ -218,20 +193,13 @@ def _fortran_backend_inputs(
         unit_cell_bx=unit_cell_bx,
         unit_cell_by=unit_cell_by,
     )
-    if int(ierr) != 0:
-        msg = f"get_perpendicular_kinetic_difference failed with error code {int(ierr)}"
-        raise RuntimeError(msg)
-
-    parallel_kinetic_energy_raw, ierr = get_parallel_kinetic_energy(
+    parallel_kinetic_energy_raw = get_parallel_kinetic_energy(
         zmin=zmin,
         zmax=zmax,
         nz=nz,
     )
-    if int(ierr) != 0:
-        msg = f"get_parallel_kinetic_energy failed with error code {int(ierr)}"
-        raise RuntimeError(msg)
 
-    wave_a_raw, wave_b_raw, wave_c_raw, ierr = get_abc_arrays(
+    wave_a_raw, wave_b_raw, wave_c_raw = get_abc_arrays(
         zmin=zmin,
         zmax=zmax,
         nx=potential_values.shape[0],
@@ -239,10 +207,6 @@ def _fortran_backend_inputs(
         perpendicular_kinetic_difference=perpendicular_kinetic_difference_raw,
         n_z_points=nz,
     )
-    if int(ierr) != 0:
-        msg = f"get_abc_arrays failed with error code {int(ierr)}"
-        raise RuntimeError(msg)
-
     hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
     scaled_potential_values = np.asfortranarray(
         potential_values * ((2.0 * mass_amu) / hbar_squared),
@@ -273,22 +237,12 @@ def test_simple_system() -> None:
         msg = f"Intensities sum to {(np.sum(intensities))}, expected 1.0"
         raise AssertionError(msg)
 
-    expected_from_file = _parse_raw_intensities(
+    expected_dense = _parse_raw_intensities_dense(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
+        nx,
+        ny,
     )
-    for spot, expected_value in expected_from_file.items():
-        hx, ky = spot
-        ix = _fft_mode_to_index(hx, nx)
-        iy = _fft_mode_to_index(ky, ny)
-        if not (0 <= ix < nx and 0 <= iy < ny):
-            msg = f"Missing diffraction spot {spot}"
-            raise AssertionError(msg)
-        if not math.isclose(float(intensities[ix, iy]), expected_value, abs_tol=5e-5):
-            msg = (
-                f"Intensity for spot {spot} is {float(intensities[ix, iy])},"
-                f" expected {expected_value}"
-            )
-            raise AssertionError(msg)
+    np.testing.assert_allclose(intensities, expected_dense, rtol=0.0, atol=5e-5)
 
 
 def _rotated_example_condition() -> tuple[
@@ -351,22 +305,12 @@ def test_rotated_system() -> None:
         msg = f"Intensities sum to {(np.sum(intensities))}, expected 1.0"
         raise AssertionError(msg)
 
-    expected_from_file = _parse_raw_intensities(
+    expected_dense = _parse_raw_intensities_dense(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
+        nx,
+        ny,
     )
-    for spot, expected_value in expected_from_file.items():
-        hx, ky = spot
-        ix = _fft_mode_to_index(hx, nx)
-        iy = _fft_mode_to_index(ky, ny)
-        if not (0 <= ix < nx and 0 <= iy < ny):
-            msg = f"Missing diffraction spot {spot}"
-            raise AssertionError(msg)
-        if not math.isclose(float(intensities[ix, iy]), expected_value, abs_tol=5e-5):
-            msg = (
-                f"Intensity for spot {spot} is {float(intensities[ix, iy])},"
-                f" expected {expected_value}"
-            )
-            raise AssertionError(msg)
+    np.testing.assert_allclose(intensities, expected_dense, rtol=0.0, atol=5e-5)
 
 
 def test_simple_system_scipy_backend() -> None:
@@ -383,22 +327,12 @@ def test_simple_system_scipy_backend() -> None:
         msg = f"Intensities sum to {(np.sum(intensities))}, expected 1.0"
         raise AssertionError(msg)
 
-    expected_from_file = _parse_raw_intensities(
+    expected_dense = _parse_raw_intensities_dense(
         TESTS_DIR / "data" / Path("expected_intensities.txt"),
+        nx,
+        ny,
     )
-    for spot, expected_value in expected_from_file.items():
-        hx, ky = spot
-        ix = _fft_mode_to_index(hx, nx)
-        iy = _fft_mode_to_index(ky, ny)
-        if not (0 <= ix < nx and 0 <= iy < ny):
-            msg = f"Missing diffraction spot {spot}"
-            raise AssertionError(msg)
-        if not math.isclose(float(intensities[ix, iy]), expected_value, abs_tol=5e-5):
-            msg = (
-                f"Intensity for spot {spot} is {float(intensities[ix, iy])},"
-                f" expected {expected_value}"
-            )
-            raise AssertionError(msg)
+    np.testing.assert_allclose(intensities, expected_dense, rtol=0.0, atol=5e-5)
 
 
 def test_scipy_preconditioner_matches_fortran_debug() -> None:
@@ -419,17 +353,13 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         parallel_kinetic_energy,
     )
 
-    eigenvalues_raw, preconditioner_factors_raw, eigenvectors_raw, ierr_raw = (
+    eigenvalues_raw, preconditioner_factors_raw, eigenvectors_raw = (
         debug_build_preconditioner_fortran(
             potential_values=potential_values,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
             parallel_kinetic_energy=parallel_kinetic_energy,
         )
     )
-    ierr = int(ierr_raw)
-    if ierr != 0:
-        msg = f"debug_build_preconditioner_fortran failed with error code {ierr}"
-        raise RuntimeError(msg)
 
     eigenvalues = np.asarray(eigenvalues_raw, dtype=np.float64)
     preconditioner_factors = np.asarray(preconditioner_factors_raw, dtype=np.float64)
@@ -472,20 +402,16 @@ def test_scipy_upper_block_matches_fortran_debug() -> None:
         wave_c,
         parallel_kinetic_energy,
     )
-    rng = np.random.default_rng(1234)
+    rng = np.random.default_rng()
     state_in = (
         rng.standard_normal((operator_data.nz, operator_data.channel_count))
         + 1j * rng.standard_normal((operator_data.nz, operator_data.channel_count))
     ).astype(np.complex128)
 
-    state_out_fortran_raw, ierr_raw = debug_apply_upper_block_fortran(
+    state_out_fortran_raw = debug_apply_upper_block_fortran(
         potential_values=potential_values,
         state_in=np.asfortranarray(state_in),
     )
-    ierr = int(ierr_raw)
-    if ierr != 0:
-        msg = f"debug_apply_upper_block_fortran failed with error code {ierr}"
-        raise RuntimeError(msg)
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
     state_out_python = _apply_upper_block_scipy(state_in, operator_data)
@@ -514,23 +440,19 @@ def test_scipy_lower_block_matches_fortran_debug() -> None:
         wave_c,
         parallel_kinetic_energy,
     )
-    rng = np.random.default_rng(5678)
+    rng = np.random.default_rng()
     state_in = (
         rng.standard_normal((operator_data.nz, operator_data.channel_count))
         + 1j * rng.standard_normal((operator_data.nz, operator_data.channel_count))
     ).astype(np.complex128)
 
-    state_out_fortran_raw, ierr_raw = debug_solve_lower_block_fortran(
+    state_out_fortran_raw = debug_solve_lower_block_fortran(
         potential_values=potential_values,
         wave_c=wave_c,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
         parallel_kinetic_energy=parallel_kinetic_energy,
         state_in=np.asfortranarray(state_in),
     )
-    ierr = int(ierr_raw)
-    if ierr != 0:
-        msg = f"debug_solve_lower_block_fortran failed with error code {ierr}"
-        raise RuntimeError(msg)
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
     state_out_python = _solve_lower_block_scipy(state_in, operator_data)
@@ -570,7 +492,7 @@ def test_perpendicular_kinetic_difference_matches_fortran() -> None:
 
     incident_kx, incident_ky, incident_kz = condition.incident_k
 
-    actual_raw, ierr_raw = get_perpendicular_kinetic_difference(
+    actual_raw = get_perpendicular_kinetic_difference(
         incident_kx=float(incident_kx),
         incident_ky=float(incident_ky),
         incident_kz=float(incident_kz),
@@ -582,14 +504,6 @@ def test_perpendicular_kinetic_difference_matches_fortran() -> None:
         unit_cell_by=float(y_vector[1]),
     )
     actual = np.asarray(actual_raw, dtype=np.float64)
-    ierr = int(ierr_raw)
-
-    if ierr != 0:
-        msg = (
-            "Fortran get_perpendicular_kinetic_difference "
-            f"failed with error code {ierr}"
-        )
-        raise RuntimeError(msg)
     np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
@@ -610,17 +524,12 @@ def test_parallel_kinetic_energy_matches_fortran() -> None:
     zmin = float(z_domain.start)
     zmax = float(z_domain.start + z_domain.delta)
 
-    actual_raw, ierr_raw = get_parallel_kinetic_energy(
+    actual_raw = get_parallel_kinetic_energy(
         zmin=zmin,
         zmax=zmax,
         nz=int(nz - 1),
     )
     actual = np.asarray(actual_raw, dtype=np.float64)
-    ierr = int(ierr_raw)
-
-    if ierr != 0:
-        msg = f"Fortran get_parallel_kinetic_energy failed with error code {ierr}"
-        raise RuntimeError(msg)
 
     # The Fortran assembly uses a shifted Lobatto block and n-1 size.
     # Match that block from Python and convert conventions with basis weights.
