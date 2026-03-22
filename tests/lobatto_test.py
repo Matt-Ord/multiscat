@@ -69,18 +69,13 @@ def test_lobatto_points_and_weights_match_fortran() -> None:
         domain=Domain(start=zmin, delta=(zmax - zmin)),
     )
 
-    weights_raw, points_raw, ierr_raw = get_lobatto_weights(
+    weights_raw, points_raw = get_lobatto_weights(
         zmin=float(zmin),
         zmax=float(zmax),
         node_count=int(random_n),
     )
     weights = np.asarray(weights_raw, dtype=np.float64)
     points = np.asarray(points_raw, dtype=np.float64)
-    ierr = int(ierr_raw)
-
-    if ierr != 0:
-        msg = f"Fortran get_lobatto_weights failed with error code {ierr}"
-        raise RuntimeError(msg)
 
     np.testing.assert_allclose(points, lobatto_points.values, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(
