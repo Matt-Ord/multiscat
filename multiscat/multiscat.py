@@ -329,7 +329,7 @@ def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int]:
         msg = "Optimization precision must be greater than zero"
         raise ValueError(msg)
 
-    gmres_preconditioner_flag = 0
+    gmres_preconditioner_flag = 1 if config.use_neumann_preconditioner else 0
     convergence_significant_figures = int(np.log10(1 / config.precision))
     return (
         gmres_preconditioner_flag,
@@ -485,7 +485,7 @@ def _get_ab_waves(
     return (a_wave.reshape((nkx, nky)), b_wave.reshape((nkx, nky)))
 
 
-def _get_outgoing_log_derivative(
+def _get_outgoing_log_derivative_wave(
     metadata: LobattoSpacedMetadata,
     perpendicular_kinetic_difference: np.ndarray[
         tuple[int, int],
@@ -571,7 +571,7 @@ class _ScipyOperatorData:
     eigenvectors: np.ndarray[Any, np.dtype[np.float64]]
     perpendicular_kinetic_difference: np.ndarray[Any, np.dtype[np.float64]]
     lower_block_factors: np.ndarray[Any, np.dtype[np.float64]]
-    outgoing_log_derivative: np.ndarray[Any, np.dtype[np.complex128]]
+    outgoing_log_derivative_wave: np.ndarray[Any, np.dtype[np.complex128]]
 
     @property
     def channel_count(self) -> int:
@@ -584,7 +584,7 @@ def _build_scipy_operator_data(
         tuple[int, int],
         np.dtype[np.float64],
     ],
-    outgoing_log_derivative: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    outgoing_log_derivative_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
 ) -> _ScipyOperatorData:
     nkx, nky, nz = potential_values.shape
@@ -612,7 +612,7 @@ def _build_scipy_operator_data(
         eigenvectors=eigenvectors,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference.ravel(),
         lower_block_factors=lower_block_factors,
-        outgoing_log_derivative=outgoing_log_derivative.ravel(),
+        outgoing_log_derivative_wave=outgoing_log_derivative_wave.ravel(),
     )
 
 
@@ -680,9 +680,9 @@ def _solve_lower_block(
     nz = operator_data.nz
     denom = 1.0 - (
         operator_data.lower_block_factors[nz - 1, 0]
-        * operator_data.outgoing_log_derivative[0]
+        * operator_data.outgoing_log_derivative_wave[0]
     )
-    fac = solved[nz - 1, 0] * operator_data.outgoing_log_derivative[0] / denom
+    fac = solved[nz - 1, 0] * operator_data.outgoing_log_derivative_wave[0] / denom
     solved[:, 0] = solved[:, 0] + (fac * operator_data.lower_block_factors[:, 0])
 
     for j in range(1, operator_data.channel_count):
@@ -698,17 +698,15 @@ def _solve_lower_block(
 
         denom = 1.0 - (
             operator_data.lower_block_factors[nz - 1, j]
-            * operator_data.outgoing_log_derivative[j]
+            * operator_data.outgoing_log_derivative_wave[j]
         )
-        fac = solved[nz - 1, j] * operator_data.outgoing_log_derivative[j] / denom
+        fac = solved[nz - 1, j] * operator_data.outgoing_log_derivative_wave[j] / denom
         solved[:, j] = solved[:, j] + (fac * operator_data.lower_block_factors[:, j])
     return solved
 
 
 def _run_multiscat_scipy(  # noqa: PLR0913
-    gmres_preconditioner_flag: int,
-    precision: float,
-    max_iterations: int,
+    config: OptimizationConfig,
     *,
     potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
     perpendicular_kinetic_difference: np.ndarray[
@@ -716,7 +714,7 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         np.dtype[np.float64],
     ],
     b_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    outgoing_log_derivative: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    outgoing_log_derivative_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
 ) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
     nkx, nky, nz = potential_values.shape
@@ -724,7 +722,7 @@ def _run_multiscat_scipy(  # noqa: PLR0913
     operator_data = _build_scipy_operator_data(
         potential_values,
         perpendicular_kinetic_difference,
-        outgoing_log_derivative,
+        outgoing_log_derivative_wave,
         parallel_kinetic_energy,
     )
 
@@ -769,14 +767,14 @@ def _run_multiscat_scipy(  # noqa: PLR0913
             (nz * channel_count, nz * channel_count),
             _apply_neumann_preconditioner,
         )
-        if gmres_preconditioner_flag == 1
+        if config.use_neumann_preconditioner
         else None
     )
 
     resid_bar = tqdm(total=1.0, desc="Total Convergence", position=1, leave=False)
 
     def _callback(pr_norm: float) -> None:
-        error = max(0, round(np.log10(pr_norm / precision), 3))
+        error = max(0, round(np.log10(pr_norm / config.precision), 3))
         next_progress = round(resid_bar.total - error, 3)
         if next_progress < 0:
             resid_bar.reset(total=error)
@@ -786,25 +784,26 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         resid_bar.refresh()
 
     # restart should not exceed system dimension.
-    krylov_dim = min(max_iterations, nz * channel_count)  # cspell: disable-line
+    krylov_dim = min(config.max_iterations, nz * channel_count)  # cspell: disable-line
     solution, gmres_info = cast(
         "tuple[np.ndarray[Any, np.dtype[np.complex128]], int]",
         scipy.sparse.linalg.gmres(  # type: ignore[unknown]
             A=linear_operator,
             b=rhs.T.reshape((-1,)),
-            rtol=precision,
+            rtol=config.precision,
             restart=krylov_dim,  # cspell: disable-line
-            maxiter=max_iterations,
+            maxiter=config.max_iterations,
             M=preconditioner_operator,
             callback=_callback,
             callback_type="pr_norm",
         ),
     )
+    resid_bar.close()
 
     if gmres_info != 0:
         msg = (
             "SciPy GMRES did not converge "
-            f"(info={gmres_info}, max_iterations={max_iterations}, "
+            f"(info={gmres_info}, max_iterations={config.max_iterations}, "
             f"restart={krylov_dim})."  # cspell: disable-line
         )
         raise RuntimeError(msg)
@@ -834,10 +833,7 @@ def get_scattering_matrix[
     mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(
         condition,
     )
-    (
-        gmres_preconditioner_flag,
-        convergence_significant_figures,
-    ) = _optimization_parameters(config)
+
     (
         nkx,
         nky,
@@ -873,7 +869,7 @@ def get_scattering_matrix[
         perpendicular_kinetic_difference,
     )
 
-    outgoing_log_derivative = _get_outgoing_log_derivative(
+    outgoing_log_derivative_wave = _get_outgoing_log_derivative_wave(
         metadata_z,
         perpendicular_kinetic_difference,
     )
@@ -884,6 +880,10 @@ def get_scattering_matrix[
     )
 
     if backend == "fortran":
+        (
+            gmres_preconditioner_flag,
+            convergence_significant_figures,
+        ) = _optimization_parameters(config)
         scattered_state_dense = run_multiscat_fortran(
             gmres_preconditioner_flag,
             convergence_significant_figures,
@@ -891,18 +891,16 @@ def get_scattering_matrix[
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
             wave_a=a_wave.ravel(),
             wave_b=b_wave.ravel(),
-            wave_c=outgoing_log_derivative.ravel(),
+            wave_c=outgoing_log_derivative_wave.ravel(),
             parallel_kinetic_energy=parallel_kinetic_energy,
         )
     elif backend == "scipy":
         scattered_state_dense = _run_multiscat_scipy(
-            gmres_preconditioner_flag,
-            config.precision,
-            config.max_iterations,
+            config,
             potential_values=scaled_potential_values,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
             b_wave=b_wave,
-            outgoing_log_derivative=outgoing_log_derivative,
+            outgoing_log_derivative_wave=outgoing_log_derivative_wave,
             parallel_kinetic_energy=parallel_kinetic_energy,
         )
     else:
