@@ -513,13 +513,9 @@ def _solve_specular_hamiltonian(
     np.ndarray[Any, np.dtype[np.float64]],
 ]:
     _, _, nz = potential_values.shape
-    specular_hamiltonian = parallel_kinetic_energy.copy()
-    specular_hamiltonian[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
-    eigenvalues, eigenvectors = np.linalg.eigh(  # cspell: disable-line
-        specular_hamiltonian,
-    )
-
-    return (eigenvalues, eigenvectors)
+    hamiltonian = parallel_kinetic_energy.copy()
+    hamiltonian[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
+    return np.linalg.eigh(hamiltonian)  # cspell: disable-line
 
 
 def _build_lower_block_factors(
