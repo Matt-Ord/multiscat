@@ -28,11 +28,13 @@ from slate_core import (
 from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
     AxisDirections,
+    Domain,
     EvenlySpacedLengthMetadata,
     LobattoSpacedLengthMetadata,
     LobattoSpacedMetadata,
 )
 from slate_core.metadata.volume import fundamental_stacked_k_points
+from slate_core.util import timed
 from slate_quantum import Operator, State
 from slate_quantum.operator import OperatorMetadata, operator_basis
 from tqdm import tqdm
@@ -45,7 +47,6 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.polynomial import (
-    get_barycentric_derivatives,
     get_barycentric_kinetic_operator,
 )
 
@@ -98,8 +99,6 @@ def _get_parallel_kinetic_energy[
     # We make use of the formula
     # T_ij = \sum_k=0 M+1 \omega_k u_i'(R_k) u'_j(R_k)
     # to calculate the kinetic matrix T_ij
-    lobatto_metadata = metadata.children[2]
-    get_barycentric_derivatives(lobatto_metadata)
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that this does not lend itself to an efficient
     # implementation when we add the parallel and perpendicular
@@ -230,7 +229,6 @@ def _get_scattered_state[  # pyright: ignore[reportUnusedFunction]
     state_basis = close_coupling_basis(state_metadata)
     nx, ny, nz = state_metadata.shape
 
-    # TODO: use split operator here ...  # noqa: FIX002
     potential_raw = potential.with_basis(
         operator_basis(state_basis),
     ).raw_data.reshape(
@@ -354,7 +352,7 @@ def _raw_potential_in_input_file_convention(
     data = potential_diagonal.with_basis(basis).raw_data
     data = data.reshape((nx, ny, nz)) * basis_weights[np.newaxis, np.newaxis, :]
 
-    # Multiscat uses a slightly different Fourier convention.
+    # Multiscat uses natural units, and a different normalization convention
     return data.ravel() / (electron_volt * 10**-3 * np.sqrt(nx * ny))
 
 
@@ -375,6 +373,7 @@ def _potential_parameters(
     float,
     float,
     np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    LobattoSpacedLengthMetadata,
 ]:
     potential_lobatto = _raw_potential_in_input_file_convention(potential)
     metadata = potential.basis.metadata().children[0]
@@ -404,6 +403,13 @@ def _potential_parameters(
         z_start_angstrom,
         z_end_angstrom,
         potential_dense,
+        LobattoSpacedLengthMetadata(
+            fundamental_size=nz,
+            domain=Domain(
+                start=z_start_angstrom,
+                delta=(z_end_angstrom - z_start_angstrom),
+            ),
+        ),
     )
 
 
@@ -426,64 +432,100 @@ def get_scattering_matrix_from_state[
 
 
 def get_scattered_intensity(
-    scattered_state_dense: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
-    wave_a: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    wave_b: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    scattered_log_derivative: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    a_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    b_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     """Recover per-channel intensities from the optimized scattered state."""
-    surface_state = scattered_state_dense[:, :, -1]
-    scattered_state = 2.0j * wave_b * surface_state
-    incoming_state = wave_a[0, 0]
-    scattered_state[0, 0] += incoming_state
-    return np.abs(scattered_state) ** 2
+    surface_log_derivative = scattered_log_derivative[:, :, -1]
+    # b_wave is the inverse of the outgoing wave amplitude
+    # b_wave is equal to o(r)^(-1)
+    # This therefore recovers the scattered state from the
+    # log derivative
+    surface_state = 2.0j * b_wave * surface_log_derivative
+    # a_wave[0,0] is i(r) o(r)^(-1)
+    # we are subtracting the incoming component
+    surface_state[0, 0] += a_wave[0, 0]
+    return np.abs(surface_state) ** 2
 
 
-def _get_abc_arrays(
-    zmin: float,
-    zmax: float,
+def _get_ab_waves(
+    metadata: LobattoSpacedMetadata,
     perpendicular_kinetic_difference: np.ndarray[
         tuple[int, int],
         np.dtype[np.floating],
     ],
-    n_z_points: int,
 ) -> tuple[
     np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    np.ndarray[tuple[int, int], np.dtype[np.complex128]],
 ]:
+    """Get the asymptotic initial state and final scattered state amplitude factors."""
     nkx, nky = perpendicular_kinetic_difference.shape
     channel_energy = perpendicular_kinetic_difference.ravel(order="C")
     dk = np.sqrt(np.abs(channel_energy))
 
-    wave_a = np.zeros(channel_energy.shape, dtype=np.complex128)
-    wave_b = np.zeros(channel_energy.shape, dtype=np.complex128)
+    # given the incoming and outgoing waves i(r) and o(r)
+    # We take the limit r-> infinity
+    # a_wave is i(r) o(r)^(-1), b_wave is o(r)^(-1)
+    a_wave = np.zeros(channel_energy.shape, dtype=np.complex128)
+    b_wave = np.zeros(channel_energy.shape, dtype=np.complex128)
 
     open_channel = channel_energy < 0.0
     if np.any(open_channel):
-        theta = dk[open_channel] * zmax
-        wave_a[open_channel] = np.cos(2.0 * theta) - 1j * np.sin(2.0 * theta)
-        wave_b[open_channel] = np.sqrt(dk[open_channel]) * (
-            np.cos(theta) - 1j * np.sin(theta)
+        theta = dk[open_channel] * (metadata.delta - metadata.domain.start)
+        a_wave[open_channel] = np.exp(-2.0j * theta)
+        b_wave[open_channel] = np.sqrt(dk[open_channel]) * np.exp(
+            -1j * theta,
         )
 
-    wave_c = 1j * np.emath.sqrt(-channel_energy)
+    node_count = metadata.fundamental_size + 1
+    endpoint_weight = np.sqrt((metadata.delta) / (node_count * (node_count - 1)))
+    b_wave = b_wave / endpoint_weight
 
-    node_count = n_z_points + 1
-    endpoint_weight = np.sqrt((zmax - zmin) / (node_count * (node_count - 1)))
-    wave_b = wave_b / endpoint_weight
-    wave_c = wave_c / (endpoint_weight**2)
+    return (a_wave.reshape((nkx, nky)), b_wave.reshape((nkx, nky)))
 
-    return (
-        wave_a.reshape((nkx, nky), order="C"),
-        wave_b.reshape((nkx, nky), order="C"),
-        wave_c.reshape((nkx, nky), order="C"),
+
+def _get_outgoing_log_derivative(
+    metadata: LobattoSpacedMetadata,
+    perpendicular_kinetic_difference: np.ndarray[
+        tuple[int, int],
+        np.dtype[np.floating],
+    ],
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """Get the outgoing channel logarithmic derivatives."""
+    nkx, nky = perpendicular_kinetic_difference.shape
+    channel_energy = perpendicular_kinetic_difference.ravel(order="C")
+
+    out = 1j * np.emath.sqrt(-channel_energy)  # cspell: disable-line
+
+    node_count = metadata.fundamental_size + 1
+    endpoint_weight = np.sqrt((metadata.delta) / (node_count * (node_count - 1)))
+    out = out / (endpoint_weight**2)
+
+    return out.reshape((nkx, nky), order="C")
+
+
+def _solve_specular_hamiltonian(
+    potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> tuple[
+    np.ndarray[tuple[int], np.dtype[np.float64]],
+    np.ndarray[Any, np.dtype[np.float64]],
+]:
+    _, _, nz = potential_values.shape
+    specular_hamiltonian = parallel_kinetic_energy.copy()
+    specular_hamiltonian[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
+    eigenvalues, eigenvectors = np.linalg.eigh(  # cspell: disable-line
+        specular_hamiltonian,
     )
+
+    return (eigenvalues, eigenvectors)
 
 
 def _build_lower_block_factors(
     potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
-    perpendicular_kinetic_difference: np.ndarray[
-        tuple[int, int],
+    channel_energy: np.ndarray[
+        tuple[int],
         np.dtype[np.float64],
     ],
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
@@ -492,21 +534,28 @@ def _build_lower_block_factors(
     np.ndarray[Any, np.dtype[np.float64]],
     np.ndarray[Any, np.dtype[np.float64]],
 ]:
-    """Python/NumPy equivalent of debug_build_preconditioner_fortran."""
-    nkx, nky, nz = potential_values.shape
-    channel_count = nkx * nky
-    kinetic_matrix = parallel_kinetic_energy.copy()
-    kinetic_matrix[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
+    """
+    Diagonalize the 1D reference Hamiltonian H_0(z) = T_z + V_0(z).
 
-    eigenvalues, eigenvectors = np.linalg.eigh(kinetic_matrix)  # cspell: disable-line
+    In atom-surface scattering, V_0(z) is the laterally averaged potential
+    (the specular term). By temporarily setting the surface corrugation
+    coupling to zero, the preconditioner P becomes purely diagonal in the
+    diffraction channel index.
 
-    mode_x = np.arange(nkx)
-    mode_x = np.where(mode_x > ((nkx - 1) // 2), mode_x - nkx, mode_x)
-    mode_y = np.arange(nky)
-    mode_y = np.where(mode_y > ((nky - 1) // 2), mode_y - nky, mode_y)
-    idx_x = np.repeat(mode_x, nky)
-    idx_y = np.tile(mode_y, nkx)
-    channel_energy = perpendicular_kinetic_difference[idx_x % nkx, idx_y % nky]
+    This function computes the eigenvalues and eigenvectors of H_0(z) once
+    at the beginning of the calculation. This allows us to rapidly invert
+    the uncoupled channels during GMRES iterations.
+    """
+    _, _, nz = potential_values.shape
+    channel_count = channel_energy.shape[0]
+
+    # Build a reference Hamiltonian, including only specular scattering
+    specular_hamiltonian = parallel_kinetic_energy.copy()
+    specular_hamiltonian[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
+    eigenvalues, eigenvectors = _solve_specular_hamiltonian(
+        potential_values=potential_values,
+        parallel_kinetic_energy=parallel_kinetic_energy,
+    )
 
     g = np.empty((nz, channel_count), dtype=np.float64)
     lower_block_factors = np.zeros((nz, channel_count), dtype=np.float64)
@@ -525,14 +574,17 @@ class _ScipyOperatorData:
     nkx: int
     nky: int
     nz: int
-    channel_count: int
     specular_channel: int
     potential_pairs: np.ndarray[Any, np.dtype[np.complex128]]
     eigenvalues: np.ndarray[Any, np.dtype[np.float64]]
     eigenvectors: np.ndarray[Any, np.dtype[np.float64]]
-    channel_energy: np.ndarray[Any, np.dtype[np.float64]]
+    perpendicular_kinetic_difference: np.ndarray[Any, np.dtype[np.float64]]
     lower_block_factors: np.ndarray[Any, np.dtype[np.float64]]
-    wave_c: np.ndarray[Any, np.dtype[np.complex128]]
+    outgoing_log_derivative: np.ndarray[Any, np.dtype[np.complex128]]
+
+    @property
+    def channel_count(self) -> int:
+        return self.perpendicular_kinetic_difference.size
 
 
 def _build_scipy_operator_data(
@@ -541,51 +593,52 @@ def _build_scipy_operator_data(
         tuple[int, int],
         np.dtype[np.float64],
     ],
-    wave_c: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    outgoing_log_derivative: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
 ) -> _ScipyOperatorData:
     nkx, nky, nz = potential_values.shape
-    channel_count = nkx * nky
 
-    mode_x = np.arange(nkx)
-    mode_x = np.where(mode_x > ((nkx - 1) // 2), mode_x - nkx, mode_x)
-    mode_y = np.arange(nky)
-    mode_y = np.where(mode_y > ((nky - 1) // 2), mode_y - nky, mode_y)
-    idx_x = np.repeat(mode_x, nky)
-    idx_y = np.tile(mode_y, nkx)
-
+    idx_x, idx_y = np.meshgrid(np.arange(nkx), np.arange(nky), indexing="ij")
+    idx_x = idx_x.ravel()
+    idx_y = idx_y.ravel()
     diff_x = (idx_x[:, np.newaxis] - idx_x[np.newaxis, :]) % nkx
     diff_y = (idx_y[:, np.newaxis] - idx_y[np.newaxis, :]) % nky
     potential_pairs = potential_values[diff_x, diff_y, :]
 
     eigenvalues, lower_block_factors, eigenvectors = _build_lower_block_factors(
         potential_values=potential_values,
-        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+        channel_energy=perpendicular_kinetic_difference.ravel(),
         parallel_kinetic_energy=parallel_kinetic_energy,
     )
-
-    channel_energy = perpendicular_kinetic_difference[idx_x % nkx, idx_y % nky]
 
     return _ScipyOperatorData(
         nkx=nkx,
         nky=nky,
         nz=nz,
-        channel_count=channel_count,
         specular_channel=0,
         potential_pairs=potential_pairs,
         eigenvalues=eigenvalues,
         eigenvectors=eigenvectors,
-        channel_energy=channel_energy,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference.ravel(),
         lower_block_factors=lower_block_factors,
-        wave_c=wave_c.ravel(),
+        outgoing_log_derivative=outgoing_log_derivative.ravel(),
     )
 
 
-def _apply_upper_block(
+def _apply_channel_coupling(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: _ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """
+    Apply the off-diagonal channel-coupling potential V_1(z)Q(x,y).
+
+    This calculates the scattering of the wave between different (kx, ky)
+    diffraction channels. Since V_1(z) is responsible for all coupling
+    between diffraction channels, this step represents the physical momentum
+    transfer parallel to the corrugated surface.
+    """
     result = np.zeros(state_vector.shape, dtype=np.complex128)
+    # Skip j=0, the specular channel, since it is included in the preconditioner
     for j in range(1, operator_data.channel_count):
         j_minus_1 = j - 1
         pairs = operator_data.potential_pairs[j_minus_1, j:, :]
@@ -593,20 +646,52 @@ def _apply_upper_block(
     return result
 
 
+def _apply_specular_operator(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: _ScipyOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """
+    Apply the inverse preconditioner.
+
+    This applies the uncoupled Green's function to the state vector
+    1 / (H_0 - E_alpha) for the specular channel alpha = 0.
+    """
+    solved = state_vector.copy()
+    # Converts to the H_0 eigenbasis, where the uncoupled Green's function is diagonal.
+    y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, 0])
+    # apply the (H_0 - E_alpha)^(-1) operator
+    y = y / (
+        operator_data.perpendicular_kinetic_difference[0] + operator_data.eigenvalues
+    )
+    # Convert back to initial basis
+    solved[:, 0] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
+    return solved
+
+
 def _solve_lower_block(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: _ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
-    solved = state_vector.copy()
-    nz = operator_data.nz
-    y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, 0])
-    y = y / (operator_data.channel_energy[0] + operator_data.eigenvalues)
-    solved[:, 0] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
+    """
+    Invert the uncoupled preconditioner L^{-1} for all channels.
 
+    This applies the uncoupled Green's function to the state vector. For
+    each diffraction channel alpha, it performs the following steps:
+
+    1. Applies the inverse of the specular Hamiltonian (H_0 - E_alpha)^(-1) to the state
+    2. Applies the outgoing-wave boundary correction C_alpha at the final
+       grid point (nz - 1) using the Sherman-Morrison rule (the rank-1
+       update using the `denom` variable).
+       TODO: I need to understand this better!
+    """
+    solved = _apply_specular_operator(state_vector, operator_data)
+
+    nz = operator_data.nz
     denom = 1.0 - (
-        operator_data.lower_block_factors[nz - 1, 0] * operator_data.wave_c[0]
+        operator_data.lower_block_factors[nz - 1, 0]
+        * operator_data.outgoing_log_derivative[0]
     )
-    fac = solved[nz - 1, 0] * operator_data.wave_c[0] / denom
+    fac = solved[nz - 1, 0] * operator_data.outgoing_log_derivative[0] / denom
     solved[:, 0] = solved[:, 0] + (fac * operator_data.lower_block_factors[:, 0])
 
     for j in range(1, operator_data.channel_count):
@@ -614,13 +699,17 @@ def _solve_lower_block(
         solved[:, j] -= np.einsum("ik,ki->k", pairs, solved[:, :j])
 
         y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, j])
-        y = y / (operator_data.channel_energy[j] + operator_data.eigenvalues)
+        y = y / (
+            operator_data.perpendicular_kinetic_difference[j]
+            + operator_data.eigenvalues
+        )
         solved[:, j] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
 
         denom = 1.0 - (
-            operator_data.lower_block_factors[nz - 1, j] * operator_data.wave_c[j]
+            operator_data.lower_block_factors[nz - 1, j]
+            * operator_data.outgoing_log_derivative[j]
         )
-        fac = solved[nz - 1, j] * operator_data.wave_c[j] / denom
+        fac = solved[nz - 1, j] * operator_data.outgoing_log_derivative[j] / denom
         solved[:, j] = solved[:, j] + (fac * operator_data.lower_block_factors[:, j])
     return solved
 
@@ -635,8 +724,8 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         tuple[int, int],
         np.dtype[np.float64],
     ],
-    wave_b: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    wave_c: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    b_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    outgoing_log_derivative: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
 ) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
     nkx, nky, nz = potential_values.shape
@@ -644,7 +733,7 @@ def _run_multiscat_scipy(  # noqa: PLR0913
     operator_data = _build_scipy_operator_data(
         potential_values,
         perpendicular_kinetic_difference,
-        wave_c,
+        outgoing_log_derivative,
         parallel_kinetic_energy,
     )
 
@@ -652,36 +741,59 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
         state = flat_state.reshape((channel_count, nz)).T
-        upper = _apply_upper_block(state, operator_data)
+        upper = _apply_channel_coupling(state, operator_data)
         lower = _solve_lower_block(upper, operator_data)
         return lower.T.reshape((-1,))
 
-    def _apply_operator(
+    def _apply_preconditioned_operator(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        """
+        Apply the preconditioned operator (I + L^{-1} * A) to the state vector.
+
+        We always use the specular preconditioner, which is required for convergence.
+        """
         return flat_state + _apply_coupling_solve(flat_state)
 
-    def _apply_preconditioner(
+    def _apply_neumann_preconditioner(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        """
+        Valuates a first-order Neumann series approximation: (I - L^{-1}U).
+
+        If L^{-1}U is small, this is an approximate solution to the scattering problem.
+        """
         return flat_state - _apply_coupling_solve(flat_state)
 
     rhs = np.zeros((nz, channel_count), dtype=np.complex128)
-    rhs[nz - 1, operator_data.specular_channel] = wave_b[0, 0]
+    rhs[nz - 1, operator_data.specular_channel] = b_wave[0, 0]
     rhs = _solve_lower_block(rhs, operator_data)
 
     linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (nz * channel_count, nz * channel_count),
-        _apply_operator,
+        _apply_preconditioned_operator,
     )
     preconditioner_operator = (
         scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
             (nz * channel_count, nz * channel_count),
-            _apply_preconditioner,
+            _apply_neumann_preconditioner,
         )
         if gmres_preconditioner_flag == 1
         else None
     )
+
+    resid_bar = tqdm(total=1.0, desc="Total Convergence", position=1, leave=False)
+
+    def _callback(pr_norm: float) -> None:
+        error = max(0, round(np.log10(pr_norm / precision), 3))
+        next_progress = round(resid_bar.total - error, 3)
+        if next_progress < 0:
+            resid_bar.reset(total=error)
+            next_progress = 0
+
+        resid_bar.n = next_progress
+        resid_bar.refresh()
+
     # restart should not exceed system dimension.
     krylov_dim = min(max_iterations, nz * channel_count)  # cspell: disable-line
     solution, gmres_info = cast(
@@ -693,6 +805,8 @@ def _run_multiscat_scipy(  # noqa: PLR0913
             restart=krylov_dim,  # cspell: disable-line
             maxiter=max_iterations,
             M=preconditioner_operator,
+            callback=_callback,
+            callback_type="pr_norm",
         ),
     )
 
@@ -707,6 +821,7 @@ def _run_multiscat_scipy(  # noqa: PLR0913
     return solution.reshape((nkx, nky, nz))
 
 
+@timed
 def get_scattering_matrix[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
@@ -743,6 +858,7 @@ def get_scattering_matrix[
         zmin,
         zmax,
         potential_values,
+        metadata_z,
     ) = _potential_parameters(condition.potential)
     perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
         incident_kx,
@@ -761,11 +877,14 @@ def get_scattering_matrix[
         nz=nz,
     )
 
-    wave_a, wave_b, wave_c = _get_abc_arrays(
-        zmin=zmin,
-        zmax=zmax,
-        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-        n_z_points=nz,
+    a_wave, b_wave = _get_ab_waves(
+        metadata_z,
+        perpendicular_kinetic_difference,
+    )
+
+    outgoing_log_derivative = _get_outgoing_log_derivative(
+        metadata_z,
+        perpendicular_kinetic_difference,
     )
 
     hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
@@ -779,9 +898,9 @@ def get_scattering_matrix[
             convergence_significant_figures,
             potential_values=scaled_potential_values,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-            wave_a=wave_a.ravel(),
-            wave_b=wave_b.ravel(),
-            wave_c=wave_c.ravel(),
+            wave_a=a_wave.ravel(),
+            wave_b=b_wave.ravel(),
+            wave_c=outgoing_log_derivative.ravel(),
             parallel_kinetic_energy=parallel_kinetic_energy,
         )
     elif backend == "scipy":
@@ -791,8 +910,8 @@ def get_scattering_matrix[
             config.max_iterations,
             potential_values=scaled_potential_values,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-            wave_b=wave_b,
-            wave_c=wave_c,
+            b_wave=b_wave,
+            outgoing_log_derivative=outgoing_log_derivative,
             parallel_kinetic_energy=parallel_kinetic_energy,
         )
     else:
@@ -801,12 +920,12 @@ def get_scattering_matrix[
 
     channel_intensity_dense = get_scattered_intensity(
         scattered_state_dense,
-        wave_a,
-        wave_b,
+        a_wave,
+        b_wave,
     )
 
     metadata_x01, _ = split_scattering_metadata(condition.metadata)
     return Array(
-        AsUpcast(basis.from_metadata(metadata_x01), metadata_x01),
+        AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
         channel_intensity_dense.astype(np.complex128),
     )

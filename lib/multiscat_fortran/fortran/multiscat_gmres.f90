@@ -104,15 +104,15 @@ contains
 
    subroutine run_preconditioned_gmres (n_z_points, &
    & potential_values,nkx,nky, &
-   & a,b,c,perpendicular_kinetic_difference,scattered_state,kinetic_matrix,convergence_eps, &
+   & b_spec,c,perpendicular_kinetic_difference,scattered_state,kinetic_matrix,convergence_eps, &
    & preconditioner_flag,info)
       implicit none
       integer, intent(in) :: n_z_points
       integer, intent(in) :: nkx, nky, preconditioner_flag
       complex(dp), intent(in) :: potential_values(nkx,nky,n_z_points)
-      complex(dp), intent(in) :: a(:), b(:), c(:)
+      complex(dp), intent(in) :: b_spec, c(:)
       real(dp), intent(in) :: perpendicular_kinetic_difference(nkx,nky)
-      complex(dp), intent(out) :: scattered_state(n_z_points,size(a))
+      complex(dp), intent(out) :: scattered_state(n_z_points,size(c))
       real(dp), intent(in) :: kinetic_matrix(n_z_points,n_z_points)
       real(dp), intent(in) :: convergence_eps
       integer, intent(out) :: info
@@ -125,7 +125,7 @@ contains
       options%convergence_window = 3
 
       call solve_scattering_gmres ( &
-         n_z_points, potential_values, nkx, nky, a, b, c, &
+         n_z_points, potential_values, nkx, nky, b_spec, c, &
          perpendicular_kinetic_difference, scattered_state, kinetic_matrix, options, result &
          )
 
@@ -134,14 +134,14 @@ contains
 
    subroutine solve_scattering_gmres (n_z_points, &
    & potential_values,nkx,nky, &
-   & a,b,c,perpendicular_kinetic_difference,scattered_state,kinetic_matrix,options,result)
+   & b_spec,c,perpendicular_kinetic_difference,scattered_state,kinetic_matrix,options,result)
       implicit none
       integer, intent(in) :: n_z_points
       integer, intent(in) :: nkx, nky
       complex(dp), intent(in) :: potential_values(nkx,nky,n_z_points)
-      complex(dp), intent(in) :: a(:), b(:), c(:)
+      complex(dp), intent(in) :: b_spec, c(:)
       real(dp), intent(in) :: perpendicular_kinetic_difference(nkx,nky)
-      complex(dp), intent(out) :: scattered_state(n_z_points,size(a))
+      complex(dp), intent(out) :: scattered_state(n_z_points,size(c))
       real(dp), intent(in) :: kinetic_matrix(n_z_points,n_z_points)
       type(GmresOptions), intent(in) :: options
       type(GmresResult), intent(out) :: result
@@ -149,14 +149,10 @@ contains
       integer :: alloc_status
       integer :: mn, channel_count
       type(ChannelIdxData) :: channel_idx
-      complex(dp), allocatable :: x(:), xx(:,:), y(:), s(:)
-      real(dp), allocatable :: intensity_work(:)
+      complex(dp), allocatable :: x(:), xx(:,:), y(:)
       real(dp), allocatable :: channel_eigenvalues(:), channel_preconditioner_factors(:,:), kinetic_matrix_work(:,:)
 
-      channel_count = size(a)
-      if (size(b) /= channel_count .or. size(c) /= channel_count) then
-         error stop 'ERROR: inconsistent channel vector sizes.'
-      end if
+      channel_count = size(c)
       if (size(scattered_state, 1) /= n_z_points .or. size(scattered_state, 2) /= channel_count) then
          error stop 'ERROR: scattered_state shape does not match solver dimensions.'
       end if
@@ -170,10 +166,8 @@ contains
       end if
 
       mn = n_z_points*channel_count
-      allocate(x(mn), xx(mn,l+1), y(mn), s(channel_count), stat=alloc_status)
+      allocate(x(mn), xx(mn,l+1), y(mn), stat=alloc_status)
       if (alloc_status /= 0) error stop 'ERROR: allocation failure (x, xx, y, s).'
-      allocate(intensity_work(channel_count), stat=alloc_status)
-      if (alloc_status /= 0) error stop 'ERROR: allocation failure (intensity_work).'
       allocate(channel_eigenvalues(n_z_points), &
       & channel_preconditioner_factors(n_z_points,channel_count), &
       & kinetic_matrix_work(n_z_points,n_z_points), stat=alloc_status)
@@ -190,8 +184,8 @@ contains
 
       call solve_gmres_system ( &
          x, xx, y, n_z_points, channel_idx, potential_values, nkx, nky, &
-         a, b, c, perpendicular_kinetic_difference, &
-         channel_eigenvalues, channel_preconditioner_factors, intensity_work, s, &
+         b_spec, c, perpendicular_kinetic_difference, &
+         channel_eigenvalues, channel_preconditioner_factors, &
          kinetic_matrix_work, options, result &
          )
 
@@ -202,8 +196,6 @@ contains
       if (allocated(x)) deallocate(x)
       if (allocated(xx)) deallocate(xx)
       if (allocated(y)) deallocate(y)
-      if (allocated(s)) deallocate(s)
-      if (allocated(intensity_work)) deallocate(intensity_work)
       if (allocated(channel_eigenvalues)) deallocate(channel_eigenvalues)
       if (allocated(channel_preconditioner_factors)) deallocate(channel_preconditioner_factors)
       if (allocated(kinetic_matrix_work)) deallocate(kinetic_matrix_work)
@@ -484,7 +476,7 @@ contains
 
    subroutine solve_gmres_system (x,xx,y,n_z_points, &
    & channel_idx, potential_values, nkx, nky, &
-   & a,b,c,perpendicular_kinetic_difference,channel_eigenvalues,channel_preconditioner_factors,p,s,kinetic_matrix,options,result)
+   & b_spec,c,perpendicular_kinetic_difference,channel_eigenvalues,channel_preconditioner_factors,kinetic_matrix,options,result)
       implicit none
       integer, intent(in) :: n_z_points, nkx, nky
       type(ChannelIdxData), intent(in) :: channel_idx
@@ -492,12 +484,10 @@ contains
       complex(dp), intent(out) :: xx(n_z_points*size(channel_idx%index_x),l+1)
       complex(dp), intent(inout) :: y(n_z_points*size(channel_idx%index_x))
       complex(dp), target, intent(in) :: potential_values(nkx,nky,n_z_points)
-      complex(dp), intent(in) :: a(:), b(:)
+      complex(dp), intent(in) :: b_spec
       complex(dp), target, intent(in) :: c(:)
-      complex(dp), intent(out) :: s(size(channel_idx%index_x))
       real(dp), target, intent(in) :: perpendicular_kinetic_difference(nkx,nky), channel_eigenvalues(n_z_points)
       real(dp), target, intent(in) :: channel_preconditioner_factors(n_z_points,size(channel_idx%index_x))
-      real(dp), intent(out) :: p(size(channel_idx%index_x))
       real(dp), target, intent(in) :: kinetic_matrix(n_z_points,n_z_points)
       type(GmresOptions), intent(in) :: options
       type(GmresResult), intent(out) :: result
@@ -505,7 +495,7 @@ contains
       integer :: alloc_status
       integer :: mn, i, j, k, kconv, kk, channel_count, maxiter
       integer :: specular_channel_index
-      real(dp) :: xnorm, unit, diff, pj
+      real(dp) :: xnorm, residual_norm, initial_residual_norm
       type(ScatteringOperator) :: operator_data
       complex(dp), allocatable :: h(:,:), g(:), z(:)
       complex(dp), allocatable :: co(:), si(:)
@@ -536,7 +526,7 @@ contains
       do i = 1,mn
          x(i) = -x(i)
       enddo
-      x(n_z_points*specular_channel_index) = b(specular_channel_index)+x(n_z_points*specular_channel_index)
+      x(n_z_points*specular_channel_index) = b_spec+x(n_z_points*specular_channel_index)
       call solve_lower_block (x,operator_data,channel_eigenvalues,channel_preconditioner_factors,kinetic_matrix)
       x(1:mn) = x(1:mn)-y(1:mn)
       if (options%preconditioner_flag .eq. 1) then
@@ -551,11 +541,9 @@ contains
       enddo
       xnorm = sqrt(xnorm)
       g(1) = xnorm
+      initial_residual_norm = max(xnorm, tiny(1.0_dp))
 
       kconv = 0
-      do j = 1,channel_count
-         p(j) = 0.0d0
-      enddo
       kk = 0
       maxiter = min(options%maxiter, l)
       do k = 1,maxiter
@@ -565,10 +553,6 @@ contains
          xx(1:mn,k+1)=x(1:mn)
          call apply_scattering_operator (x,y,operator_data, &
          & channel_eigenvalues,channel_preconditioner_factors,kinetic_matrix,options)
-         y(1:mn)=xx(1:mn,1)
-         do i = 1,channel_count
-            s(i) = y(n_z_points*i)
-         enddo
          do j = 1,k
             y(1:mn)=xx(1:mn,j+1)
             h(j,k) = (0.0d0,0.0d0)
@@ -578,16 +562,7 @@ contains
             do i = 1,mn
                x(i) = x(i)-y(i)*h(j,k)
             enddo
-            if (j .lt. k) then
-               do i = 1,channel_count
-                  s(i) = s(i)+y(n_z_points*i)*z(j)
-               enddo
-            endif
          enddo
-         do i = 1,channel_count
-            s(i) = (0.0d0,2.0d0)*b(i)*s(i)
-         enddo
-         s(specular_channel_index) = a(specular_channel_index)+s(specular_channel_index)
          xnorm = 0.0d0
          do i = 1,mn
             xnorm = xnorm + real(conjg(x(i))*x(i),kind=dp)
@@ -612,16 +587,8 @@ contains
             enddo
          enddo
 
-         unit = 0.0d0
-         diff = 0.0d0
-         do j = 1,channel_count
-            pj = real(conjg(s(j))*s(j),kind=dp)
-            unit = unit+pj
-            diff = max(diff,abs(pj-p(j)))
-            p(j) = pj
-         enddo
-         diff = max(diff,abs(unit-1.0d0))
-         if (diff .lt. options%rtol) then
+         residual_norm = abs(g(k+1))
+         if (residual_norm .lt. options%rtol*initial_residual_norm) then
             kconv = kconv+1
          else
             kconv = 0
