@@ -20,6 +20,13 @@ class OptimizationConfig:
 
     precision: float = 1e-5
     max_iterations: int = 1000
+    use_neumann_preconditioner: bool = True
+    """
+    As well as the default "specular" preconditioner,
+    we can also apply an additional Neumann series preconditioner
+    which approximately inverts the problem when the non-specular
+    scattering is small.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)

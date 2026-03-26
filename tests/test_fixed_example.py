@@ -37,7 +37,7 @@ from multiscat.multiscat import (
     _build_scipy_operator_data,
     _condition_parameters,
     _get_ab_waves,
-    _get_outgoing_log_derivative,
+    _get_outgoing_log_derivative_wave,
     _get_parallel_kinetic_energy,
     _get_perpendicular_kinetic_difference,
     _potential_parameters,
@@ -417,7 +417,7 @@ def test_python_abc_arrays_match_fortran() -> None:
         wave_c_fortran,
     ) = _fortran_backend_inputs(condition)
 
-    wave_c_python = _get_outgoing_log_derivative(
+    wave_c_python = _get_outgoing_log_derivative_wave(
         metadata_z,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
     )
