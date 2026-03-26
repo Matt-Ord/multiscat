@@ -22,7 +22,7 @@ from scipy.constants import (  # type: ignore[import-untyped]
     hbar,
     physical_constants,
 )
-from slate_core import EvenlySpacedLengthMetadata, array
+from slate_core import EvenlySpacedLengthMetadata, array, basis
 from slate_quantum import operator
 
 from multiscat.basis import (
@@ -32,18 +32,17 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
-    _apply_upper_block,
+    _apply_channel_coupling,
     _build_lower_block_factors,
     _build_scipy_operator_data,
     _condition_parameters,
+    _get_ab_waves,
+    _get_outgoing_log_derivative,
     _get_parallel_kinetic_energy,
     _get_perpendicular_kinetic_difference,
     _potential_parameters,
     _solve_lower_block,
     get_scattering_matrix,
-)
-from multiscat.multiscat import (
-    _get_abc_arrays as _get_abc_arrays_python,
 )
 
 if TYPE_CHECKING:
@@ -178,6 +177,7 @@ def _fortran_backend_inputs(
         zmin,
         zmax,
         potential_values,
+        _,
     ) = _potential_parameters(condition.potential)
 
     perpendicular_kinetic_difference_raw = get_perpendicular_kinetic_difference(
@@ -224,7 +224,11 @@ def test_simple_system() -> None:
 
     condition, config = _simple_example_condition()
     s_matrix = get_scattering_matrix(condition, config)
-    intensities = np.real_if_close(s_matrix.as_array())
+    intensities = np.real_if_close(
+        s_matrix.with_basis(
+            basis.transformed_from_metadata(s_matrix.basis.metadata()),
+        ).raw_data.reshape(condition.metadata.shape[:2]),
+    )
     nx, ny = intensities.shape
 
     if intensities.size == 0:
@@ -291,7 +295,11 @@ def test_rotated_system() -> None:
 
     condition, config = _rotated_example_condition()
     s_matrix = get_scattering_matrix(condition, config)
-    intensities = np.real_if_close(s_matrix.as_array())
+    intensities = np.real_if_close(
+        s_matrix.with_basis(
+            basis.transformed_from_metadata(s_matrix.basis.metadata()),
+        ).raw_data.reshape(condition.metadata.shape[:2]),
+    )
     nx, ny = intensities.shape
 
     if intensities.size == 0:
@@ -312,7 +320,11 @@ def test_rotated_system() -> None:
 def test_simple_system_scipy_backend() -> None:
     condition, config = _simple_example_condition()
     s_matrix = get_scattering_matrix(condition, config, backend="scipy")
-    intensities = np.real_if_close(s_matrix.as_array())
+    intensities = np.real_if_close(
+        s_matrix.with_basis(
+            basis.transformed_from_metadata(s_matrix.basis.metadata()),
+        ).raw_data.reshape(condition.metadata.shape[:2]),
+    )
     nx, ny = intensities.shape
 
     if intensities.size == 0:
@@ -344,7 +356,7 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
     eigenvalues_python, lower_block_factors_python, eigenvectors_python = (
         _build_lower_block_factors(
             potential_values,
-            perpendicular_kinetic_difference,
+            perpendicular_kinetic_difference.ravel(),
             parallel_kinetic_energy,
         )
     )
@@ -386,16 +398,16 @@ def test_python_abc_arrays_match_fortran() -> None:
     (
         _nkx,
         _nky,
-        nz,
+        _nz,
         _unit_cell_ax,
         _unit_cell_ay,
         _unit_cell_bx,
         _unit_cell_by,
-        zmin,
-        zmax,
+        _zmin,
+        _zmax,
         _potential_values,
+        metadata_z,
     ) = _potential_parameters(condition.potential)
-
     (
         _scaled_potential_values,
         perpendicular_kinetic_difference,
@@ -405,11 +417,14 @@ def test_python_abc_arrays_match_fortran() -> None:
         wave_c_fortran,
     ) = _fortran_backend_inputs(condition)
 
-    wave_a_python, wave_b_python, wave_c_python = _get_abc_arrays_python(
-        zmin=zmin,
-        zmax=zmax,
+    wave_c_python = _get_outgoing_log_derivative(
+        metadata_z,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-        n_z_points=nz,
+    )
+
+    wave_a_python, wave_b_python = _get_ab_waves(
+        metadata_z,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
     )
 
     shape = perpendicular_kinetic_difference.shape
@@ -462,7 +477,7 @@ def test_scipy_upper_block_matches_fortran_debug() -> None:
     )
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _apply_upper_block(state_in, operator_data)
+    state_out_python = _apply_channel_coupling(state_in, operator_data)
     np.testing.assert_allclose(
         state_out_python,
         state_out_fortran,

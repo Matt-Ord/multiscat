@@ -36,13 +36,17 @@ contains
       n_z_points = size(potential_values, 3)
       channel_count = size(perpendicular_kinetic_difference, 1) * size(perpendicular_kinetic_difference, 2)
 
+      if (size(wave_a) /= channel_count .or. size(wave_b) /= channel_count .or. size(wave_c) /= channel_count) then
+         error stop 'ERROR: inconsistent wave vector sizes for scattering solve.'
+      end if
+
       allocate(scattered_state(n_z_points,channel_count), stat=alloc_status)
       if (alloc_status /= 0) error stop 'ERROR: allocation failure (scattered_state).'
 
       call run_preconditioned_gmres ( &
          n_z_points, &
          potential_values, size(potential_values, 1), size(potential_values, 2), &
-         wave_a, wave_b, wave_c, perpendicular_kinetic_difference, scattered_state, &
+         wave_b(1), wave_c, perpendicular_kinetic_difference, scattered_state, &
       & parallel_kinetic_energy, eps, optimization_data%gmres_preconditioner_flag, gmres_info &
          )
 
