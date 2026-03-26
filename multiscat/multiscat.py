@@ -539,19 +539,18 @@ def _build_lower_block_factors(
 
     In atom-surface scattering, V_0(z) is the laterally averaged potential
     (the specular term). By temporarily setting the surface corrugation
-    coupling to zero, the preconditioner P becomes purely diagonal in the
+    coupling to zero, the matrix becomes purely diagonal in the
     diffraction channel index.
 
+    We use this matrix to build the preconditioner for the GMRES solver.
+
     This function computes the eigenvalues and eigenvectors of H_0(z) once
-    at the beginning of the calculation. This allows us to rapidly invert
-    the uncoupled channels during GMRES iterations.
+    at the beginning of the calculation. We then use this to precondition
+    our GMRES solver.
     """
     _, _, nz = potential_values.shape
     channel_count = channel_energy.shape[0]
 
-    # Build a reference Hamiltonian, including only specular scattering
-    specular_hamiltonian = parallel_kinetic_energy.copy()
-    specular_hamiltonian[np.diag_indices(nz)] += np.real(potential_values[0, 0, :])
     eigenvalues, eigenvectors = _solve_specular_hamiltonian(
         potential_values=potential_values,
         parallel_kinetic_energy=parallel_kinetic_energy,
@@ -562,11 +561,7 @@ def _build_lower_block_factors(
     for j in range(channel_count):
         g[:, j] = eigenvectors[nz - 1, :] / (channel_energy[j] + eigenvalues)
         lower_block_factors[:, j] = np.einsum("ki,i->k", eigenvectors, g[:, j])
-    return (
-        eigenvalues,
-        lower_block_factors,
-        eigenvectors,
-    )
+    return (eigenvalues, lower_block_factors, eigenvectors)
 
 
 @dataclass(frozen=True)
