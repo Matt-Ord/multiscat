@@ -329,11 +329,11 @@ def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int]:
         msg = "Optimization precision must be greater than zero"
         raise ValueError(msg)
 
-    gmres_preconditioner_flag = 1 if config.use_neumann_preconditioner else 0
-    convergence_significant_figures = int(np.log10(1 / config.precision))
+    preconditioner_flag = 1 if config.use_neumann_preconditioner else 0
+    n_significant_figures = int(np.log10(1 / config.precision))
     return (
-        gmres_preconditioner_flag,
-        convergence_significant_figures,
+        preconditioner_flag,
+        n_significant_figures,
     )
 
 
@@ -552,6 +552,7 @@ def _build_lower_block_factors(
         parallel_kinetic_energy=parallel_kinetic_energy,
     )
 
+    # calculate (H_0 - E_alpha)^(-1) C_i u_i
     g = np.empty((nz, channel_count), dtype=np.float64)
     lower_block_factors = np.zeros((nz, channel_count), dtype=np.float64)
     for j in range(channel_count):
@@ -640,23 +641,108 @@ def _apply_channel_coupling(
 def _apply_specular_operator(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: _ScipyOperatorData,
+    *,
+    channel_idx: int,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """
-    Apply the inverse preconditioner.
+    Apply the inverse specular operator (H_0 - E_i)^(-1).
 
     This applies the uncoupled Green's function to the state vector
-    1 / (H_0 - E_alpha) for the specular channel alpha = 0.
+    1 / (H_0 - E_i) for the channel i.
     """
-    solved = state_vector.copy()
     # Converts to the H_0 eigenbasis, where the uncoupled Green's function is diagonal.
-    y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, 0])
+    transformed_state = np.einsum(
+        "lk,l->k",
+        operator_data.eigenvectors,
+        state_vector[:, channel_idx],
+    )
     # apply the (H_0 - E_alpha)^(-1) operator
-    y = y / (
-        operator_data.perpendicular_kinetic_difference[0] + operator_data.eigenvalues
+    transformed_state /= (
+        operator_data.perpendicular_kinetic_difference[channel_idx]
+        + operator_data.eigenvalues
     )
     # Convert back to initial basis
-    solved[:, 0] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
-    return solved
+    return np.einsum("kl,l->k", operator_data.eigenvectors, transformed_state)
+
+
+def _apply_boundary_corrections(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: _ScipyOperatorData,
+    *,
+    channel_idx: int,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """
+    Enforce the outgoing wave boundary conditions on the state vector.
+
+    This applies the outgoing-wave boundary correction C_i at the final
+    grid point (nz - 1) using the Sherman-Morrison rule.
+
+    We want to apply the operator
+        (H_0 - E_alpha + C_i u_i v_i^T)^(-1) psi
+    We have the result of (H_0 - E_alpha)^(-1) psi, and we can
+    therefore calculate the inverse using the Sherman-Morrison formula.
+
+
+
+
+    Here,
+     u is a vector with a 1 at the boundary and 0 elsewhere
+     (H_0 - E_alpha)^(-1) C_i u_i is simply lower_block_factors[:, i]
+     v^T is a vector with a boundary value -C at the boundary and 0 elsewhere
+
+
+    The Sherman-Morrison formula for the inverse of a rank-1 update is
+    (H_0 - E_alpha + C_i u_i v_i^T)^(-1) psi
+    =
+    (H_0 - E_alpha)^(-1) psi -
+    (lower_block * (v_i^T (H_0 - E_alpha)^(-1) psi)) / denom
+
+    with denom = 1.0 - (v_i^T (H_0 - E_alpha)^(-1) C_i u_i)
+
+    where v_i^T (H_0 - E_alpha)^(-1) psi is state_vector[-1, channel_idx]
+          (H_0 - E_alpha)^(-1) psi  is state_vector[:, channel_idx]
+
+    """
+    denom = 1.0 - (
+        operator_data.lower_block_factors[-1, channel_idx]
+        * operator_data.outgoing_log_derivative_wave[channel_idx]
+    )
+    fac = (
+        state_vector[-1, channel_idx]
+        * operator_data.outgoing_log_derivative_wave[channel_idx]
+        / denom
+    )
+    return state_vector[:, channel_idx] + (
+        fac * operator_data.lower_block_factors[:, channel_idx]
+    )
+
+
+def _apply_uncoupled_inverse_operator(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: _ScipyOperatorData,
+    *,
+    channel_idx: int,
+) -> None:
+    """
+    Apply the inverse operator (H_0 - E_i + C_i u_i v_i^T)^(-1).
+
+    This applies the uncoupled Green's function to the state vector
+    1 / (H_0 - E_i + C_i u_i v_i^T) for the channel i, where C_i is the
+    outgoing wave boundary correction at the final grid point.
+    """
+    # First, apply the inverse of the specular operator (H_0 - E_i)^(-1) psi
+    state_vector[:, channel_idx] = _apply_specular_operator(
+        state_vector,
+        operator_data,
+        channel_idx=channel_idx,
+    )
+    # Use the Sherman-Morrison formula to apply a boundary correction
+    # The resulting state is (H_0 - E_i + C_i u_i v_i^T)^(-1) psi
+    state_vector[:, channel_idx] = _apply_boundary_corrections(
+        state_vector,
+        operator_data,
+        channel_idx=channel_idx,
+    )
 
 
 def _solve_lower_block(
@@ -669,39 +755,26 @@ def _solve_lower_block(
     This applies the uncoupled Green's function to the state vector. For
     each diffraction channel alpha, it performs the following steps:
 
-    1. Applies the inverse of the specular Hamiltonian (H_0 - E_alpha)^(-1) to the state
+    1.  Applies the inverse of the specular Operator (H_0 - E_i + C_i u_i v_i^T)^(-1)
+        to the state
     2. Applies the outgoing-wave boundary correction C_alpha at the final
        grid point (nz - 1) using the Sherman-Morrison rule (the rank-1
        update using the `denom` variable).
        TODO: I need to understand this better!
     """
-    solved = _apply_specular_operator(state_vector, operator_data)
-
-    nz = operator_data.nz
-    denom = 1.0 - (
-        operator_data.lower_block_factors[nz - 1, 0]
-        * operator_data.outgoing_log_derivative_wave[0]
-    )
-    fac = solved[nz - 1, 0] * operator_data.outgoing_log_derivative_wave[0] / denom
-    solved[:, 0] = solved[:, 0] + (fac * operator_data.lower_block_factors[:, 0])
+    solved = state_vector.copy()
+    _apply_uncoupled_inverse_operator(solved, operator_data, channel_idx=0)
 
     for j in range(1, operator_data.channel_count):
         pairs = operator_data.potential_pairs[j, :j, :]
         solved[:, j] -= np.einsum("ik,ki->k", pairs, solved[:, :j])
 
-        y = np.einsum("lk,l->k", operator_data.eigenvectors, solved[:, j])
-        y = y / (
-            operator_data.perpendicular_kinetic_difference[j]
-            + operator_data.eigenvalues
+        _apply_uncoupled_inverse_operator(
+            solved,
+            operator_data,
+            channel_idx=j,
         )
-        solved[:, j] = np.einsum("kl,l->k", operator_data.eigenvectors, y)
 
-        denom = 1.0 - (
-            operator_data.lower_block_factors[nz - 1, j]
-            * operator_data.outgoing_log_derivative_wave[j]
-        )
-        fac = solved[nz - 1, j] * operator_data.outgoing_log_derivative_wave[j] / denom
-        solved[:, j] = solved[:, j] + (fac * operator_data.lower_block_factors[:, j])
     return solved
 
 
@@ -881,12 +954,12 @@ def get_scattering_matrix[
 
     if backend == "fortran":
         (
-            gmres_preconditioner_flag,
-            convergence_significant_figures,
+            preconditioner_flag,
+            n_significant_figures,
         ) = _optimization_parameters(config)
         scattered_state_dense = run_multiscat_fortran(
-            gmres_preconditioner_flag,
-            convergence_significant_figures,
+            preconditioner_flag,
+            n_significant_figures,
             potential_values=scaled_potential_values,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
             wave_a=a_wave.ravel(),
