@@ -32,7 +32,8 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
-    _apply_channel_coupling,
+    _apply_inverse_lower_block,
+    _apply_upper_block,
     _build_lower_block_factors,
     _build_scipy_operator_data,
     _condition_parameters,
@@ -41,7 +42,6 @@ from multiscat.multiscat import (
     _get_parallel_kinetic_energy,
     _get_perpendicular_kinetic_difference,
     _potential_parameters,
-    _solve_lower_block,
     get_scattering_matrix,
 )
 
@@ -477,7 +477,7 @@ def test_scipy_upper_block_matches_fortran_debug() -> None:
     )
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _apply_channel_coupling(state_in, operator_data)
+    state_out_python = _apply_upper_block(state_in, operator_data)
     np.testing.assert_allclose(
         state_out_python,
         state_out_fortran,
@@ -518,7 +518,7 @@ def test_scipy_lower_block_matches_fortran_debug() -> None:
     )
 
     state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _solve_lower_block(state_in, operator_data)
+    state_out_python = _apply_inverse_lower_block(state_in, operator_data)
     np.testing.assert_allclose(
         state_out_python,
         state_out_fortran,
