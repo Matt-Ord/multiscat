@@ -617,7 +617,7 @@ def _build_scipy_operator_data(
     )
 
 
-def _apply_channel_coupling(
+def _apply_upper_block(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: _ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
@@ -643,7 +643,7 @@ def _apply_specular_operator(
     operator_data: _ScipyOperatorData,
     *,
     channel_idx: int,
-) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+) -> None:
     """
     Apply the inverse specular operator (H_0 - E_i)^(-1).
 
@@ -662,7 +662,11 @@ def _apply_specular_operator(
         + operator_data.eigenvalues
     )
     # Convert back to initial basis
-    return np.einsum("kl,l->k", operator_data.eigenvectors, transformed_state)
+    state_vector[:, channel_idx] = np.einsum(
+        "kl,l->k",
+        operator_data.eigenvectors,
+        transformed_state,
+    )
 
 
 def _apply_boundary_corrections(
@@ -670,7 +674,7 @@ def _apply_boundary_corrections(
     operator_data: _ScipyOperatorData,
     *,
     channel_idx: int,
-) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+) -> None:
     """
     Enforce the outgoing wave boundary conditions on the state vector.
 
@@ -712,12 +716,12 @@ def _apply_boundary_corrections(
         * operator_data.outgoing_log_derivative_wave[channel_idx]
         / denom
     )
-    return state_vector[:, channel_idx] + (
+    state_vector[:, channel_idx] += (
         fac * operator_data.lower_block_factors[:, channel_idx]
     )
 
 
-def _apply_uncoupled_inverse_operator(
+def _apply_uncoupled_inverse_lower_block_operator(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: _ScipyOperatorData,
     *,
@@ -731,45 +735,42 @@ def _apply_uncoupled_inverse_operator(
     outgoing wave boundary correction at the final grid point.
     """
     # First, apply the inverse of the specular operator (H_0 - E_i)^(-1) psi
-    state_vector[:, channel_idx] = _apply_specular_operator(
-        state_vector,
-        operator_data,
-        channel_idx=channel_idx,
-    )
+    _apply_specular_operator(state_vector, operator_data, channel_idx=channel_idx)
     # Use the Sherman-Morrison formula to apply a boundary correction
     # The resulting state is (H_0 - E_i + C_i u_i v_i^T)^(-1) psi
-    state_vector[:, channel_idx] = _apply_boundary_corrections(
-        state_vector,
-        operator_data,
-        channel_idx=channel_idx,
-    )
+    _apply_boundary_corrections(state_vector, operator_data, channel_idx=channel_idx)
 
 
-def _solve_lower_block(
+def _apply_inverse_lower_block(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: _ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """
-    Invert the uncoupled preconditioner L^{-1} for all channels.
+    Apply the inverse of the lower block diagonal operator to the state vector.
 
-    This applies the uncoupled Green's function to the state vector. For
-    each diffraction channel alpha, it performs the following steps:
+    The lower diagonal operator
+    contains (H_0 - E_i + C_i u_i v_i^T + V^lower)
 
-    1.  Applies the inverse of the specular Operator (H_0 - E_i + C_i u_i v_i^T)^(-1)
-        to the state
-    2. Applies the outgoing-wave boundary correction C_alpha at the final
-       grid point (nz - 1) using the Sherman-Morrison rule (the rank-1
-       update using the `denom` variable).
-       TODO: I need to understand this better!
+    This can be inverted efficiently using a simple trick!
+    For a lower diagonal operator L = (D + V^lower)
+    where D is the diagonal part of the operator, and V is the
+    part that is strictly lower diagonal, we can write
+
+    (D_i out_i + V^lower_ij out_j) = state_i
+    => out_i = D^(-1)_i (state_i - V^lower_ij out_j)
+
+    but since V^lower is strictly lower diagonal, we can solve for out_i!
+
     """
     solved = state_vector.copy()
-    _apply_uncoupled_inverse_operator(solved, operator_data, channel_idx=0)
 
-    for j in range(1, operator_data.channel_count):
+    for j in range(operator_data.channel_count):
+        # subtract V^lower_ij out_j
         pairs = operator_data.potential_pairs[j, :j, :]
         solved[:, j] -= np.einsum("ik,ki->k", pairs, solved[:, :j])
 
-        _apply_uncoupled_inverse_operator(
+        # Apply D^(-1)_i
+        _apply_uncoupled_inverse_lower_block_operator(
             solved,
             operator_data,
             channel_idx=j,
@@ -803,17 +804,29 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
         state = flat_state.reshape((channel_count, nz)).T
-        upper = _apply_channel_coupling(state, operator_data)
-        lower = _solve_lower_block(upper, operator_data)
+        upper = _apply_upper_block(state, operator_data)
+        lower = _apply_inverse_lower_block(upper, operator_data)
         return lower.T.reshape((-1,))
 
     def _apply_preconditioned_operator(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
         """
-        Apply the preconditioned operator (I + L^{-1} * A) to the state vector.
+        Apply the preconditioned operator (I + L^{-1} * U) to the state vector.
 
-        We always use the specular preconditioner, which is required for convergence.
+        In the "simple" problem, we would solve (H_0 + V + C_i u_iv_i^T) psi = b.
+        We split this operator into (L + U) psi = b
+        where L is the lower operator and U is the upper operator.
+
+        L contains the lower diagonal terms in the scattering
+        potential, and the diagonal terms
+        (H_0 and the boundary correction C_i u_i v_i^T).
+
+        We then apply the preconditioner L^{-1} to both sides, giving
+        (I + L^{-1} * U) psi = L^{-1} b
+
+        We always use the specular preconditioner L^{-1},
+        which is required for convergence.
         """
         return flat_state + _apply_coupling_solve(flat_state)
 
@@ -827,9 +840,11 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         """
         return flat_state - _apply_coupling_solve(flat_state)
 
+    # Prepare the rhs vector L^{-1} b, where b
+    # is the initial state with only the incoming wave in the specular channel.
     rhs = np.zeros((nz, channel_count), dtype=np.complex128)
-    rhs[nz - 1, operator_data.specular_channel] = b_wave[0, 0]
-    rhs = _solve_lower_block(rhs, operator_data)
+    rhs[-1, operator_data.specular_channel] = b_wave[0, 0]
+    rhs = _apply_inverse_lower_block(rhs, operator_data)
 
     linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (nz * channel_count, nz * channel_count),
