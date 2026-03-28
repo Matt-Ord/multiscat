@@ -1,4 +1,3 @@
-import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -45,12 +44,12 @@ from multiscat.basis import (
     close_coupling_basis,
     split_scattering_metadata,
 )
-from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.polynomial import (
     get_barycentric_kinetic_operator,
 )
 
 if TYPE_CHECKING:
+    from multiscat.config import OptimizationConfig, ScatteringCondition
     from multiscat.interpolate import ScatteringOperator
 
 
@@ -165,141 +164,6 @@ def get_kinetic_difference_operator[
         basis=_get_kinetic_difference_operator_basis(metadata),
         data=data.astype(np.complexfloating),
     )
-
-
-def _gmres[DT: np.dtype[np.number]](
-    matrix: scipy.sparse.linalg.LinearOperator,
-    initial_state: np.ndarray[Any, DT],
-    *,
-    options: OptimizationConfig,
-) -> np.ndarray[Any, DT]:
-    resid_bar = tqdm(total=1.0, desc="Total Convergence", position=1, leave=False)
-
-    def _callback(pr_norm: float) -> None:
-        error = round(np.log10(pr_norm / options.precision), 3)
-        next_progress = round(resid_bar.total - error, 3)
-        if next_progress < 0:
-            resid_bar.reset(total=error)
-            next_progress = 0
-
-        resid_bar.n = next_progress
-        resid_bar.refresh()
-
-    data, _info = scipy.sparse.linalg.gmres(  # type: ignore[unknown]
-        A=matrix,
-        b=initial_state,
-        rtol=options.precision,
-        maxiter=options.max_iterations,
-        callback=_callback,
-        callback_type="pr_norm",
-    )
-    resid_bar.close()
-    if _info != 0:
-        warnings.warn(
-            f"GMRES iteration did not converge in {options.max_iterations} "
-            f"iterations to a precision of {options.precision}. "
-            "This may indicate that the problem is ill-conditioned or that the "
-            "initial guess is too far from the solution.",
-            UserWarning,
-            stacklevel=4,
-        )
-    return cast("np.ndarray[Any, DT]", data)
-
-
-def _get_scattered_state[  # pyright: ignore[reportUnusedFunction]
-    M0: EvenlySpacedLengthMetadata,
-    M1: LobattoSpacedMetadata,
-    E: AxisDirections,
-](
-    kinetic_difference: Operator[
-        KineticDifferenceOperatorBasis[M0, M1, E],
-        np.dtype[np.complexfloating],
-    ],
-    potential: ScatteringOperator[M0, M1, E],
-    *,
-    options: OptimizationConfig,
-) -> State[CloseCouplingBasis[M0, M1, E]]:
-    """
-    Get the basis for the scattered state.
-
-    This is a diagonal basis in the lobatto basis, and a tuple basis in the
-    bloch K indices.
-    """
-    state_metadata = potential.basis.metadata().children[0]
-    state_basis = close_coupling_basis(state_metadata)
-    nx, ny, nz = state_metadata.shape
-
-    potential_raw = potential.with_basis(
-        operator_basis(state_basis),
-    ).raw_data.reshape(
-        (nx * ny * nz, nx * ny * nz),
-    )
-    kinetic_raw = kinetic_difference.raw_data.reshape(
-        (nx, ny, nz, nz),
-    )
-
-    initial_state = np.zeros((nx, ny, nz), dtype=np.complexfloating)
-    initial_state[0, 0, -1] = 1.0
-
-    def matmul_hamiltonian(
-        state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
-    ) -> float:
-        """Cost function for the GMRES solver."""
-        # The cost function is the kinetic energy minus the potential energy
-        cost_kinetic = np.einsum(
-            "ijkl,ijl->ijk",
-            kinetic_raw,
-            state.reshape((nx, ny, nz)),
-        ).ravel()
-        # Note that the potential is likely to be sparse, since only a few
-        # terms in a band along the diagonal are non-zero.
-        # For performance, we should use a sparse matrix here!
-        # TODO: can we do this more efficiently using fourier transforms? # noqa: FIX002
-        cost_potential = np.einsum(
-            "ij,j->i",
-            potential_raw,
-            state.ravel(),
-        )
-        return cost_kinetic + cost_potential
-
-    # TODO: to make gmres work 'well', we need to build the  # noqa: FIX002
-    # correct preconditioner
-    # In the future, we should also probably port this to a
-    # compiled language, or otherwise use some cython build
-    # to speed up the loop.
-    # Or we could use a more efficient approach (ML) to speed up the
-    # convergence of the solver.
-    # TODO: how do we ensure bcs are satisfied, we should probably  # noqa: FIX002
-    # manually add the initial condition each iteration? Is this even needed?
-    data = _gmres(  # type: ignore[unknown]
-        matrix=scipy.sparse.linalg.LinearOperator(
-            shape=potential_raw.shape,
-            matvec=matmul_hamiltonian,  # type: ignore[call-arg]
-            dtype=np.complexfloating,
-        ),
-        initial_state=initial_state.ravel(),
-        options=options,
-    )
-    return State(state_basis, data)
-
-
-def get_scattered_state[
-    M0: EvenlySpacedLengthMetadata,
-    M1: LobattoSpacedLengthMetadata,
-    E: AxisDirections,
-](
-    condition: ScatteringCondition[M0, M1, E],
-    *,
-    options: OptimizationConfig | None = None,
-) -> State[CloseCouplingBasis[M0, M1, E]]:
-    options = options or OptimizationConfig()
-    _kinetic_difference = get_kinetic_difference_operator(
-        condition.incident_k,
-        condition.metadata,
-    )
-
-    msg = "This function is not implemented yet."
-    raise NotImplementedError(msg)
 
 
 def _condition_parameters[
@@ -432,17 +296,17 @@ def get_scattering_matrix_from_state[
 
 
 def get_scattered_intensity(
-    scattered_log_derivative: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    solution: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
     a_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     b_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     """Recover per-channel intensities from the optimized scattered state."""
-    surface_log_derivative = scattered_log_derivative[:, :, -1]
+    surface_solution = solution[:, :, -1]
     # b_wave is the inverse of the outgoing wave amplitude
     # b_wave is equal to o(r)^(-1)
     # This therefore recovers the scattered state from the
     # log derivative
-    surface_state = 2.0j * b_wave * surface_log_derivative
+    surface_state = 2.0j * b_wave * surface_solution
     # a_wave[0,0] is i(r) o(r)^(-1)
     # we are subtracting the incoming component
     surface_state[0, 0] += a_wave[0, 0]
@@ -779,6 +643,115 @@ def _apply_inverse_lower_block(
     return solved
 
 
+def _run_gauss_seidel_gradient_decent(  # cspell: disable-line
+    initial_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    inverse_lower: scipy.sparse.linalg.LinearOperator,
+    upper: scipy.sparse.linalg.LinearOperator,
+    *,
+    config: OptimizationConfig,
+) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+    """
+    Use gradient decent to solve the linear system (I + L^{-1} U) psi = L^{-1} psi.
+
+    This is equivalent to solving the original linear problem
+    (L + U) psi = b, but is more efficient to solve since the operator (I + L^{-1} U)
+    is closer to the identity.
+
+    The input to this function is the initial guess at psi.
+    The output of this function is L^{-1} psi, we
+    can recover psi by applying the lower operator.
+
+    Optionally, this probelm can be "double preconditioned"
+    by applying a first-order Neumann series approximation to the operator
+    (I - L^{-1} U) as a preconditioner to the GMRES solver. This should improve
+    convergence if L^{-1} U is small.
+    """
+    n_states = initial_state.size
+
+    def _apply_linear_operator(
+        state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        """
+        Apply the preconditioned operator (I + L^{-1} * U) to the state vector.
+
+        In the "simple" problem, we would solve (H_0 + V + C_i u_iv_i^T) psi = b.
+        We split this operator into (L + U) psi = b
+        where L is the lower operator and U is the upper operator.
+
+        L contains the lower diagonal terms in the scattering
+        potential, and the diagonal terms
+        (H_0 and the boundary correction C_i u_i v_i^T).
+
+        We then apply the preconditioner L^{-1} to both sides, giving
+        (I + L^{-1} * U) psi = L^{-1} b
+
+        We always use the specular preconditioner L^{-1},
+        which is required for convergence.
+        """
+        return state + inverse_lower.matvec(upper.matvec(state))  # type: ignore[unknown]
+
+    def _apply_neumann_preconditioner(
+        state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        """
+        Valuates a first-order Neumann series approximation: (I - L^{-1}U).
+
+        If L^{-1}U is small, this is an approximate solution to the scattering problem.
+        """
+        return state - inverse_lower.matvec(upper.matvec(state))  # type: ignore[unknown]
+
+    linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+        (n_states, n_states),
+        _apply_linear_operator,
+    )
+    preconditioner = (
+        scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+            (n_states, n_states),
+            _apply_neumann_preconditioner,
+        )
+        if config.use_neumann_preconditioner
+        else None
+    )
+
+    resid_bar = tqdm(total=1.0, desc="Total Convergence", position=1, leave=False)
+
+    def _callback(pr_norm: float) -> None:
+        error = max(0, round(np.log10(pr_norm / config.precision), 3))
+        next_progress = round(resid_bar.total - error, 3)
+        if next_progress < 0:
+            resid_bar.reset(total=error)
+            next_progress = 0
+
+        resid_bar.n = next_progress
+        resid_bar.refresh()
+
+    restart = min(config.max_iterations, initial_state.size)
+    solution, gmres_info = cast(
+        "tuple[np.ndarray[Any, np.dtype[np.complex128]], int]",
+        scipy.sparse.linalg.gmres(  # type: ignore[unknown]
+            A=linear_operator,
+            b=inverse_lower(initial_state),
+            rtol=config.precision,
+            restart=restart,
+            maxiter=config.max_iterations,
+            M=preconditioner,
+            callback=_callback,
+            callback_type="pr_norm",
+        ),
+    )
+    resid_bar.close()
+
+    if gmres_info != 0:
+        msg = (
+            "SciPy GMRES did not converge "
+            f"(info={gmres_info}, max_iterations={config.max_iterations}, "
+            f"restart={restart})."
+        )
+        raise RuntimeError(msg)
+
+    return solution
+
+
 def _run_multiscat_scipy(  # noqa: PLR0913
     config: OptimizationConfig,
     *,
@@ -800,101 +773,43 @@ def _run_multiscat_scipy(  # noqa: PLR0913
         parallel_kinetic_energy,
     )
 
-    def _apply_coupling_solve(
+    def _apply_inverse_lower(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        state = flat_state.reshape((channel_count, nz)).T
+        lower = _apply_inverse_lower_block(state, operator_data)
+        return lower.T.reshape((-1,))
+
+    inverse_lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+        (channel_count * nz, channel_count * nz),
+        _apply_inverse_lower,
+        dtype=np.complex128,  # type: ignore[assignment]
+    )
+
+    def _apply_upper(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
         state = flat_state.reshape((channel_count, nz)).T
         upper = _apply_upper_block(state, operator_data)
-        lower = _apply_inverse_lower_block(upper, operator_data)
-        return lower.T.reshape((-1,))
+        return upper.T.reshape((-1,))
 
-    def _apply_preconditioned_operator(
-        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
-    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
-        """
-        Apply the preconditioned operator (I + L^{-1} * U) to the state vector.
-
-        In the "simple" problem, we would solve (H_0 + V + C_i u_iv_i^T) psi = b.
-        We split this operator into (L + U) psi = b
-        where L is the lower operator and U is the upper operator.
-
-        L contains the lower diagonal terms in the scattering
-        potential, and the diagonal terms
-        (H_0 and the boundary correction C_i u_i v_i^T).
-
-        We then apply the preconditioner L^{-1} to both sides, giving
-        (I + L^{-1} * U) psi = L^{-1} b
-
-        We always use the specular preconditioner L^{-1},
-        which is required for convergence.
-        """
-        return flat_state + _apply_coupling_solve(flat_state)
-
-    def _apply_neumann_preconditioner(
-        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
-    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
-        """
-        Valuates a first-order Neumann series approximation: (I - L^{-1}U).
-
-        If L^{-1}U is small, this is an approximate solution to the scattering problem.
-        """
-        return flat_state - _apply_coupling_solve(flat_state)
-
-    # Prepare the rhs vector L^{-1} b, where b
-    # is the initial state with only the incoming wave in the specular channel.
-    rhs = np.zeros((nz, channel_count), dtype=np.complex128)
-    rhs[-1, operator_data.specular_channel] = b_wave[0, 0]
-    rhs = _apply_inverse_lower_block(rhs, operator_data)
-
-    linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
-        (nz * channel_count, nz * channel_count),
-        _apply_preconditioned_operator,
-    )
-    preconditioner_operator = (
-        scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
-            (nz * channel_count, nz * channel_count),
-            _apply_neumann_preconditioner,
-        )
-        if config.use_neumann_preconditioner
-        else None
+    upper = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+        (channel_count * nz, channel_count * nz),
+        _apply_upper,
+        dtype=np.complex128,  # type: ignore[assignment]
     )
 
-    resid_bar = tqdm(total=1.0, desc="Total Convergence", position=1, leave=False)
+    # Prepare the initial guess
+    # This is the initial state with only the incoming wave in the specular channel.
+    initial_state = np.zeros((nz, channel_count), dtype=np.complex128)
+    initial_state[-1, operator_data.specular_channel] = b_wave[0, 0]
 
-    def _callback(pr_norm: float) -> None:
-        error = max(0, round(np.log10(pr_norm / config.precision), 3))
-        next_progress = round(resid_bar.total - error, 3)
-        if next_progress < 0:
-            resid_bar.reset(total=error)
-            next_progress = 0
-
-        resid_bar.n = next_progress
-        resid_bar.refresh()
-
-    # restart should not exceed system dimension.
-    krylov_dim = min(config.max_iterations, nz * channel_count)  # cspell: disable-line
-    solution, gmres_info = cast(
-        "tuple[np.ndarray[Any, np.dtype[np.complex128]], int]",
-        scipy.sparse.linalg.gmres(  # type: ignore[unknown]
-            A=linear_operator,
-            b=rhs.T.reshape((-1,)),
-            rtol=config.precision,
-            restart=krylov_dim,  # cspell: disable-line
-            maxiter=config.max_iterations,
-            M=preconditioner_operator,
-            callback=_callback,
-            callback_type="pr_norm",
-        ),
+    solution = _run_gauss_seidel_gradient_decent(  # cspell: disable-line
+        initial_state=initial_state.T.ravel(),
+        inverse_lower=inverse_lower,
+        upper=upper,
+        config=config,
     )
-    resid_bar.close()
-
-    if gmres_info != 0:
-        msg = (
-            "SciPy GMRES did not converge "
-            f"(info={gmres_info}, max_iterations={config.max_iterations}, "
-            f"restart={krylov_dim})."  # cspell: disable-line
-        )
-        raise RuntimeError(msg)
 
     return solution.reshape((nkx, nky, nz))
 
@@ -972,7 +887,7 @@ def get_scattering_matrix[
             preconditioner_flag,
             n_significant_figures,
         ) = _optimization_parameters(config)
-        scattered_state_dense = run_multiscat_fortran(
+        solution = run_multiscat_fortran(
             preconditioner_flag,
             n_significant_figures,
             potential_values=scaled_potential_values,
@@ -983,7 +898,7 @@ def get_scattering_matrix[
             parallel_kinetic_energy=parallel_kinetic_energy,
         )
     elif backend == "scipy":
-        scattered_state_dense = _run_multiscat_scipy(
+        solution = _run_multiscat_scipy(
             config,
             potential_values=scaled_potential_values,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
@@ -996,7 +911,7 @@ def get_scattering_matrix[
         raise ValueError(msg)
 
     channel_intensity_dense = get_scattered_intensity(
-        scattered_state_dense,
+        solution,
         a_wave,
         b_wave,
     )
