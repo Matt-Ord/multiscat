@@ -825,25 +825,16 @@ def get_scattering_matrix[
     # The outer python code assumes n_z includes the boundary,
     # whereas the inner fortran code assumes n_z does not include the boundary.
     parallel_kinetic_energy = -_get_parallel_kinetic_energy(
-        metadata=LobattoSpacedLengthMetadata(
-            metadata_z.fundamental_size + 1,
-            domain=metadata_z.domain,
-        ),
-    )[1:, 1:]
+        metadata=metadata_z,
+    )
 
     a_wave, b_wave = _get_ab_waves(
-        LobattoSpacedLengthMetadata(
-            metadata_z.fundamental_size + 1,
-            domain=metadata_z.domain,
-        ),
+        metadata_z,
         perpendicular_kinetic_difference,
     )
 
     outgoing_log_derivative_wave = _get_outgoing_log_derivative_wave(
-        LobattoSpacedLengthMetadata(
-            metadata_z.fundamental_size + 1,
-            domain=metadata_z.domain,
-        ),
+        metadata_z,
         perpendicular_kinetic_difference,
     )
 
