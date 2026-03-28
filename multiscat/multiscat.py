@@ -5,7 +5,6 @@ import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
 from multiscat_fortran import (
-    get_perpendicular_kinetic_difference,
     run_multiscat_fortran,
 )
 from scipy.constants import (  # type: ignore[import-untyped]
@@ -105,13 +104,17 @@ def _get_parallel_kinetic_energy(
 
 
 def _get_perpendicular_kinetic_difference[
-    M0: EvenlySpacedLengthMetadata,
-    M1: LobattoSpacedMetadata,
-    E: AxisDirections,
+    M0: TupleMetadata[
+        tuple[EvenlySpacedLengthMetadata, EvenlySpacedLengthMetadata],
+        AxisDirections,
+    ],
 ](
     incident_k: tuple[float, float, float],
-    metadata: ScatteringBasisMetadata[M0, M1, E],
-) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
+    metadata: TupleMetadata[
+        tuple[EvenlySpacedLengthMetadata, EvenlySpacedLengthMetadata],
+        AxisDirections,
+    ],
+) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     """
     Get the matrix of scattered energies d.
 
@@ -121,9 +124,8 @@ def _get_perpendicular_kinetic_difference[
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that the array does not have and index for the parallel
     # direction, so we cannot use existing ContractedBasis functionality
-    metadata_x01, _ = split_scattering_metadata(metadata)
-    (kx, ky) = fundamental_stacked_k_points(metadata_x01, offset=incident_k[:2])
-    return ((kx**2 + ky**2) - np.linalg.norm(incident_k) ** 2).ravel()
+    (kx, ky) = fundamental_stacked_k_points(metadata, offset=incident_k[:2])
+    return ((kx**2 + ky**2) - np.linalg.norm(incident_k) ** 2).reshape(metadata.shape)  # type: ignore[no-untyped-call]
 
 
 def get_kinetic_difference_operator[
@@ -138,12 +140,13 @@ def get_kinetic_difference_operator[
     np.dtype[np.complexfloating],
 ]:
     """Get the matrix of kinetic energies minus the incident energy."""
+    metadata_xy, metadata_z = split_scattering_metadata(metadata)
     # The parallel kinetic energy is the same for each bloch K, but is non-diagonal
     # in the lobatto basis
-    t_jk = _get_parallel_kinetic_energy(metadata.children[2])
+    t_jk = _get_parallel_kinetic_energy(metadata_z)
     # The perpendicular kinetic energy difference is diagonal in both the bloch K,
     # and the lobatto basis functions. Here we scale by the lobatto weights
-    d_i = _get_perpendicular_kinetic_difference(incident_k, metadata)
+    d_i = _get_perpendicular_kinetic_difference(incident_k, metadata_xy).ravel()
     d_ijk = np.einsum(
         "i,jk->ijk",
         d_i,
@@ -169,16 +172,60 @@ def _condition_parameters[
         M1,
         E,
     ],
-) -> tuple[float, float, float, float]:
+) -> tuple[
+    tuple[float, float, float],
+    np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    TupleMetadata[
+        tuple[EvenlySpacedLengthMetadata, EvenlySpacedLengthMetadata],
+        AxisDirections,
+    ],
+    LobattoSpacedLengthMetadata,
+]:
     scattering_vector = np.asarray(condition.incident_k)
     scattering_magnitude = float(np.linalg.norm(scattering_vector))
     if scattering_magnitude <= 0:
         msg = "Incident wavevector magnitude must be non-zero"
         raise ValueError(msg)
 
-    mass_amu = float(condition.mass / atomic_mass)
     kx, ky, kz = condition.incident_k
-    return mass_amu, float(kx * angstrom), float(ky * angstrom), float(kz * angstrom)
+
+    potential = _raw_potential_in_input_file_convention(condition.potential)
+    hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
+    mass_amu = float(condition.mass / atomic_mass)
+    potential = potential * ((2.0 * mass_amu) / hbar_squared)
+
+    metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
+
+    return (
+        (kx * angstrom, ky * angstrom, kz * angstrom),
+        potential,
+        TupleMetadata(
+            (
+                EvenlySpacedLengthMetadata(
+                    metadata_x01.shape[0],
+                    domain=Domain(
+                        start=0,
+                        delta=metadata_x01.children[0].domain.delta / angstrom,
+                    ),
+                ),
+                EvenlySpacedLengthMetadata(
+                    metadata_x01.shape[1],
+                    domain=Domain(
+                        start=0,
+                        delta=metadata_x01.children[1].domain.delta / angstrom,
+                    ),
+                ),
+            ),
+            metadata_x01.extra,
+        ),
+        LobattoSpacedLengthMetadata(
+            fundamental_size=metadata_z.fundamental_size,
+            domain=Domain(
+                start=metadata_z.domain.start / angstrom,
+                delta=metadata_z.domain.delta / angstrom,
+            ),
+        ),
+    )
 
 
 def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int]:
@@ -210,64 +257,7 @@ def _raw_potential_in_input_file_convention(
     data = data.reshape((nx, ny, nz)) * basis_weights[np.newaxis, np.newaxis, :]
 
     # Multiscat uses natural units, and a different normalization convention
-    return data.ravel() / (electron_volt * 10**-3 * np.sqrt(nx * ny))
-
-
-def _potential_parameters(
-    potential: ScatteringOperator[
-        EvenlySpacedLengthMetadata,
-        LobattoSpacedLengthMetadata,
-        AxisDirections,
-    ],
-) -> tuple[
-    int,
-    int,
-    int,
-    float,
-    float,
-    float,
-    float,
-    float,
-    float,
-    np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
-    LobattoSpacedLengthMetadata,
-]:
-    potential_lobatto = _raw_potential_in_input_file_convention(potential)
-    metadata = potential.basis.metadata().children[0]
-    nx, ny, nz = metadata.shape
-    z_domain = metadata.children[2].domain
-    z_start_angstrom = float(z_domain.start / angstrom)
-    z_end_angstrom = float((z_domain.start + z_domain.delta) / angstrom)
-
-    metadata_x01, _ = split_scattering_metadata(metadata)
-    directions = metadata.extra.vectors
-    x_vector = np.asarray(directions[0]) * metadata_x01.children[0].domain.delta
-    y_vector = np.asarray(directions[1]) * metadata_x01.children[1].domain.delta
-    ax_angstrom = float(x_vector[0] / angstrom)
-    ay_angstrom = float(x_vector[1] / angstrom)
-    bx_angstrom = float(y_vector[0] / angstrom)
-    by_angstrom = float(y_vector[1] / angstrom)
-
-    potential_dense = np.asfortranarray(potential_lobatto.reshape((nx, ny, nz)))
-    return (
-        int(nx),
-        int(ny),
-        int(nz),
-        ax_angstrom,
-        ay_angstrom,
-        bx_angstrom,
-        by_angstrom,
-        z_start_angstrom,
-        z_end_angstrom,
-        potential_dense,
-        LobattoSpacedLengthMetadata(
-            fundamental_size=nz,
-            domain=Domain(
-                start=z_start_angstrom,
-                delta=(z_end_angstrom - z_start_angstrom),
-            ),
-        ),
-    )
+    return data / (electron_volt * 10**-3 * np.sqrt(nx * ny))
 
 
 def get_scattering_matrix_from_state[
@@ -335,10 +325,7 @@ def _get_ab_waves(
             -1j * theta,
         )
 
-    node_count = metadata.fundamental_size + 1
-    endpoint_weight = np.sqrt((metadata.delta) / (node_count * (node_count - 1)))
-    b_wave = b_wave / endpoint_weight
-
+    b_wave = b_wave * metadata.basis_weights[-1]
     return (a_wave.reshape((nkx, nky)), b_wave.reshape((nkx, nky)))
 
 
@@ -351,14 +338,11 @@ def _get_outgoing_log_derivative_wave(
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """Get the outgoing channel logarithmic derivatives."""
     nkx, nky = perpendicular_kinetic_difference.shape
-    channel_energy = perpendicular_kinetic_difference.ravel(order="C")
+    channel_energy = perpendicular_kinetic_difference.ravel()
 
     out = 1j * np.emath.sqrt(-channel_energy)  # cspell: disable-line
 
-    node_count = metadata.fundamental_size + 1
-    endpoint_weight = np.sqrt((metadata.delta) / (node_count * (node_count - 1)))
-    out = out / (endpoint_weight**2)
-
+    out = out * metadata.basis_weights[-1] ** 2
     return out.reshape((nkx, nky), order="C")
 
 
@@ -827,33 +811,15 @@ def get_scattering_matrix[
     np.dtype[np.complex128],
 ]:
     """Run Multiscat through the f2py native binding."""
-    mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(
-        condition,
-    )
-
     (
-        nkx,
-        nky,
-        _nz,
-        unit_cell_ax,
-        unit_cell_ay,
-        unit_cell_bx,
-        unit_cell_by,
-        _zmin,
-        _zmax,
-        potential_values,
+        incident_k,
+        potential,
+        metadata_xy,
         metadata_z,
-    ) = _potential_parameters(condition.potential)
-    perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
-        incident_kx,
-        incident_ky,
-        incident_kz,
-        nx=nkx,
-        ny=nky,
-        unit_cell_ax=unit_cell_ax,
-        unit_cell_ay=unit_cell_ay,
-        unit_cell_bx=unit_cell_bx,
-        unit_cell_by=unit_cell_by,
+    ) = _condition_parameters(condition)
+    perpendicular_kinetic_difference = _get_perpendicular_kinetic_difference(
+        incident_k,
+        metadata_xy,
     )
     # Note: here we differ by conventions for n_z.
     # The outer python code assumes n_z includes the boundary,
@@ -866,18 +832,19 @@ def get_scattering_matrix[
     )[1:, 1:]
 
     a_wave, b_wave = _get_ab_waves(
-        metadata_z,
+        LobattoSpacedLengthMetadata(
+            metadata_z.fundamental_size + 1,
+            domain=metadata_z.domain,
+        ),
         perpendicular_kinetic_difference,
     )
 
     outgoing_log_derivative_wave = _get_outgoing_log_derivative_wave(
-        metadata_z,
+        LobattoSpacedLengthMetadata(
+            metadata_z.fundamental_size + 1,
+            domain=metadata_z.domain,
+        ),
         perpendicular_kinetic_difference,
-    )
-
-    hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
-    scaled_potential_values = np.asfortranarray(
-        potential_values * ((2.0 * mass_amu) / hbar_squared),
     )
 
     if backend == "fortran":
@@ -888,7 +855,7 @@ def get_scattering_matrix[
         solution = run_multiscat_fortran(
             preconditioner_flag,
             n_significant_figures,
-            potential_values=scaled_potential_values,
+            potential_values=potential,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
             wave_a=a_wave.ravel(),
             wave_b=b_wave.ravel(),
@@ -898,7 +865,7 @@ def get_scattering_matrix[
     elif backend == "scipy":
         solution = _run_multiscat_scipy(
             config,
-            potential_values=scaled_potential_values,
+            potential_values=potential,
             perpendicular_kinetic_difference=perpendicular_kinetic_difference,
             b_wave=b_wave,
             outgoing_log_derivative_wave=outgoing_log_derivative_wave,
