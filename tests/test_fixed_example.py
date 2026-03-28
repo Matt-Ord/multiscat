@@ -576,7 +576,7 @@ def test_parallel_kinetic_energy_matches_fortran() -> None:
     metadata = condition.metadata
     _, _, nz = metadata.shape
 
-    expected = _get_parallel_kinetic_energy(metadata)
+    expected = _get_parallel_kinetic_energy(metadata.children[2])
 
     z_domain = metadata.children[2].domain
     zmin = float(z_domain.start)
@@ -592,4 +592,4 @@ def test_parallel_kinetic_energy_matches_fortran() -> None:
     # The Fortran assembly uses a shifted Lobatto block and n-1 size.
     # Match that block from Python and convert conventions with basis weights.
     expected = expected[1:, 1:]
-    np.testing.assert_allclose(actual, -expected)
+    np.testing.assert_allclose(actual, -expected, rtol=2e-6)

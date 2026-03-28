@@ -5,7 +5,6 @@ import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
 from multiscat_fortran import (
-    get_parallel_kinetic_energy,
     get_perpendicular_kinetic_difference,
     run_multiscat_fortran,
 )
@@ -83,13 +82,9 @@ def _get_kinetic_difference_operator_basis[
     return AsUpcast(contracted, TupleMetadata((metadata, metadata)))
 
 
-def _get_parallel_kinetic_energy[
-    M0: SimpleMetadata,
-    M1: LobattoSpacedLengthMetadata,
-    E: AxisDirections,
-](
-    metadata: ScatteringBasisMetadata[M0, M1, E],
-) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+def _get_parallel_kinetic_energy(
+    metadata: LobattoSpacedLengthMetadata,
+) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
     """
     Get the matrix of parallel kinetic energies T.
 
@@ -104,13 +99,9 @@ def _get_parallel_kinetic_energy[
     # basis. Issue is that this does not lend itself to an efficient
     # implementation when we add the parallel and perpendicular
     # kinetic energies together.
-    lobatto_metadata = metadata.children[2]
     return array.as_fundamental_basis(
-        get_barycentric_kinetic_operator(lobatto_metadata),
-    ).raw_data.reshape(
-        lobatto_metadata.fundamental_size,
-        lobatto_metadata.fundamental_size,
-    )
+        get_barycentric_kinetic_operator(metadata),
+    ).raw_data.reshape((metadata.fundamental_size, metadata.fundamental_size))
 
 
 def _get_perpendicular_kinetic_difference[
@@ -149,7 +140,7 @@ def get_kinetic_difference_operator[
     """Get the matrix of kinetic energies minus the incident energy."""
     # The parallel kinetic energy is the same for each bloch K, but is non-diagonal
     # in the lobatto basis
-    t_jk = _get_parallel_kinetic_energy(metadata)
+    t_jk = _get_parallel_kinetic_energy(metadata.children[2])
     # The perpendicular kinetic energy difference is diagonal in both the bloch K,
     # and the lobatto basis functions. Here we scale by the lobatto weights
     d_i = _get_perpendicular_kinetic_difference(incident_k, metadata)
@@ -843,13 +834,13 @@ def get_scattering_matrix[
     (
         nkx,
         nky,
-        nz,
+        _nz,
         unit_cell_ax,
         unit_cell_ay,
         unit_cell_bx,
         unit_cell_by,
-        zmin,
-        zmax,
+        _zmin,
+        _zmax,
         potential_values,
         metadata_z,
     ) = _potential_parameters(condition.potential)
@@ -864,11 +855,15 @@ def get_scattering_matrix[
         unit_cell_bx=unit_cell_bx,
         unit_cell_by=unit_cell_by,
     )
-    parallel_kinetic_energy = get_parallel_kinetic_energy(
-        zmin=zmin,
-        zmax=zmax,
-        nz=nz,
-    )
+    # Note: here we differ by conventions for n_z.
+    # The outer python code assumes n_z includes the boundary,
+    # whereas the inner fortran code assumes n_z does not include the boundary.
+    parallel_kinetic_energy = -_get_parallel_kinetic_energy(
+        metadata=LobattoSpacedLengthMetadata(
+            metadata_z.fundamental_size + 1,
+            domain=metadata_z.domain,
+        ),
+    )[1:, 1:]
 
     a_wave, b_wave = _get_ab_waves(
         metadata_z,

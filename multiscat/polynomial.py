@@ -66,24 +66,38 @@ def get_barycentric_derivatives(
         u_i(x) = \frac{1}{\sqrt{w_i}} \prod_{k=0}^{M+1} \frac{x - x_k}{x_i - x_k}
 
     This function computes the derivative matrix for these basis functions.
-
     """
-    # We scale the values to the range [0, 1] to avoid numerical issues
     values = metadata.values
-    scale_factor = 1 / (values[-1] - values[0])
+    # Scale values to [0, 1] to keep numbers well-behaved
+    scale_factor = 1.0 / (values[-1] - values[0])
     scaled_values = (values - values[0]) * scale_factor
 
     difference = scaled_values[:, None] - scaled_values[None, :]
-    np.fill_diagonal(difference, 1.0)  # avoid divide by zero
-    # λ_i = 1 / Π_{k ≠ i} (x_i - x_k)
-    barycentric_weights = 1.0 / np.prod(difference, axis=1)
-    scaled_derivatives = barycentric_weights[None, :] / (
-        difference * barycentric_weights[:, None]
-    )
+    # Fill diagonal with 1.0 to avoid log(0) and division by zero.
+    np.fill_diagonal(difference, 1.0)
+
+    # Compute log|w_i| = sum_{k!=i} log|x_i - x_k|
+    log_diff = np.log(np.abs(difference))
+    log_w = np.sum(log_diff, axis=1)
+
+    # Track the signs sign(w_i) = prod_{k!=i} sign(x_i - x_k)
+    sign_w = np.prod(np.sign(difference), axis=1)
+
+    # Assemble the ratio w_i / w_j = (sign_i / sign_j) * exp(log_w_i - log_w_j)
+    # Note: 1 / sign_j is mathematically identical to sign_j
+    log_ratio = log_w[:, None] - log_w[None, :]
+    sign_ratio = sign_w[:, None] * sign_w[None, :]
+    weight_ratio = sign_ratio * np.exp(log_ratio)
+
+    # Off-diagonal elements: D_ij = (w_i / w_j) / (x_i - x_j)
+    scaled_derivatives = weight_ratio / difference
+
+    # Diagonal elements: D_ii = sum_{k!=i} 1 / (x_i - x_k)
+    inv_diff = 1.0 / difference
+    np.fill_diagonal(inv_diff, 0.0)  # Ensure we don't sum the dummy 1.0s
 
     diag_mask = np.diag_indices(metadata.fundamental_size)
-    scaled_derivatives[diag_mask] = 0
-    scaled_derivatives[diag_mask] = -np.sum(scaled_derivatives, axis=1)
+    scaled_derivatives[diag_mask] = np.sum(inv_diff, axis=1)
 
     derivatives = scaled_derivatives * scale_factor
 
@@ -92,7 +106,7 @@ def get_barycentric_derivatives(
 
 def get_barycentric_kinetic_operator[M1: BarycentricMetadata](
     metadata: M1,
-) -> Operator[OperatorBasis[M1], np.dtype[np.complex128]]:
+) -> Operator[OperatorBasis[M1], np.dtype[np.float64]]:
     """
     Get the kinetic operator grad squared in a barycentric basis.
 
@@ -110,7 +124,7 @@ def get_barycentric_kinetic_operator[M1: BarycentricMetadata](
         operator_basis(FundamentalBasis(metadata)).upcast(),
         -np.einsum(
             "k,ik,jk->ij",
-            1 / np.square(metadata.basis_weights),
+            1.0 / np.square(metadata.basis_weights),
             derivatives,
             derivatives,
         ),
