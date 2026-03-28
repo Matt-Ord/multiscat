@@ -32,10 +32,8 @@ from multiscat.basis import (
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
-    _apply_inverse_lower_block,
-    _apply_upper_block,
     _build_lower_block_factors,
-    _build_scipy_operator_data,
+    _build_scipy_operators,
     _condition_parameters,
     _get_ab_waves,
     _get_outgoing_log_derivative_wave,
@@ -459,27 +457,28 @@ def test_scipy_upper_block_matches_fortran_debug() -> None:
         wave_c,
     ) = _fortran_backend_inputs(condition)
 
-    operator_data = _build_scipy_operator_data(
+    _inverse_lower, upper = _build_scipy_operators(
         potential_values,
         perpendicular_kinetic_difference,
         wave_c,
         parallel_kinetic_energy,
     )
+    nkx, nky, nz = potential_values.shape
     rng = np.random.default_rng()
     state_in = (
-        rng.standard_normal((operator_data.nz, operator_data.channel_count))
-        + 1j * rng.standard_normal((operator_data.nz, operator_data.channel_count))
+        rng.standard_normal((nkx, nky, nz)) + 1j * rng.standard_normal((nkx, nky, nz))
     ).astype(np.complex128)
 
+    state_in_raw = state_in.reshape((nkx * nky, nz)).T
     state_out_fortran_raw = debug_apply_upper_block_fortran(
         potential_values=potential_values,
-        state_in=np.asfortranarray(state_in),
+        state_in=state_in_raw,
     )
 
-    state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _apply_upper_block(state_in, operator_data)
+    state_out_fortran = state_out_fortran_raw.reshape((nz, nkx * nky)).T.ravel()
+    state_out_python = upper.matvec(state_in.ravel())  # type: ignore[unknown]
     np.testing.assert_allclose(
-        state_out_python,
+        state_out_python,  # type: ignore[unknown]
         state_out_fortran,
         rtol=1e-9,
         atol=1e-10,
@@ -497,30 +496,32 @@ def test_scipy_lower_block_matches_fortran_debug() -> None:
         wave_c,
     ) = _fortran_backend_inputs(condition)
 
-    operator_data = _build_scipy_operator_data(
+    inverse_lower, _upper = _build_scipy_operators(
         potential_values,
         perpendicular_kinetic_difference,
         wave_c,
         parallel_kinetic_energy,
     )
     rng = np.random.default_rng()
+    nkx, nky, nz = potential_values.shape
+    rng = np.random.default_rng()
     state_in = (
-        rng.standard_normal((operator_data.nz, operator_data.channel_count))
-        + 1j * rng.standard_normal((operator_data.nz, operator_data.channel_count))
+        rng.standard_normal((nkx, nky, nz)) + 1j * rng.standard_normal((nkx, nky, nz))
     ).astype(np.complex128)
 
+    state_in_raw = state_in.reshape((nkx * nky, nz)).T
     state_out_fortran_raw = debug_solve_lower_block_fortran(
         potential_values=potential_values,
         wave_c=wave_c,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
         parallel_kinetic_energy=parallel_kinetic_energy,
-        state_in=np.asfortranarray(state_in),
+        state_in=state_in_raw,
     )
 
-    state_out_fortran = np.asarray(state_out_fortran_raw, dtype=np.complex128)
-    state_out_python = _apply_inverse_lower_block(state_in, operator_data)
+    state_out_fortran = state_out_fortran_raw.reshape((nz, nkx * nky)).T.ravel()
+    state_out_python = inverse_lower.matvec(state_in.ravel())  # type: ignore[unknown]
     np.testing.assert_allclose(
-        state_out_python,
+        state_out_python,  # type: ignore[unknown]
         state_out_fortran,
         rtol=1e-9,
         atol=1e-10,
@@ -571,14 +572,8 @@ def test_perpendicular_kinetic_difference_matches_fortran() -> None:
 
 
 def test_parallel_kinetic_energy_matches_fortran() -> None:
-    metadata = scattering_metadata_from_stacked_delta_x(
-        (
-            np.array([UNIT_CELL, 0.0, 0.0]),
-            np.array([0.0, UNIT_CELL, 0.0]),
-            np.array([0.0, 0.0, Z_HEIGHT]),
-        ),
-        (10, 10, 10),
-    )
+    condition, _ = _simple_example_condition()
+    metadata = condition.metadata
     _, _, nz = metadata.shape
 
     expected = _get_parallel_kinetic_energy(metadata)

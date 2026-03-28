@@ -49,6 +49,5 @@ if __name__ == "__main__":
     fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs")
     ax.set_title("The scattering matrix")
     fig.show()
-    fig.savefig("scattering_matrix.png")
 
     plot.wait_for_close()

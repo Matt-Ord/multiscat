@@ -49,6 +49,8 @@ from multiscat.polynomial import (
 )
 
 if TYPE_CHECKING:
+    from scipy.sparse.linalg import LinearOperator  # type: ignore[untyped]
+
     from multiscat.config import OptimizationConfig, ScatteringCondition
     from multiscat.interpolate import ScatteringOperator
 
@@ -443,7 +445,7 @@ class _ScipyOperatorData:
         return self.perpendicular_kinetic_difference.size
 
 
-def _build_scipy_operator_data(
+def _build_scipy_operators(
     potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
     perpendicular_kinetic_difference: np.ndarray[
         tuple[int, int],
@@ -451,7 +453,7 @@ def _build_scipy_operator_data(
     ],
     outgoing_log_derivative_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
-) -> _ScipyOperatorData:
+) -> tuple[LinearOperator, LinearOperator]:
     nkx, nky, nz = potential_values.shape
 
     idx_x, idx_y = np.meshgrid(np.arange(nkx), np.arange(nky), indexing="ij")
@@ -467,7 +469,7 @@ def _build_scipy_operator_data(
         parallel_kinetic_energy=parallel_kinetic_energy,
     )
 
-    return _ScipyOperatorData(
+    operator_data = _ScipyOperatorData(
         nkx=nkx,
         nky=nky,
         nz=nz,
@@ -479,6 +481,36 @@ def _build_scipy_operator_data(
         lower_block_factors=lower_block_factors,
         outgoing_log_derivative_wave=outgoing_log_derivative_wave.ravel(),
     )
+    channel_count = operator_data.channel_count
+
+    state_size = np.prod((nkx, nky, nz))
+
+    def _apply_inverse_lower(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        state = flat_state.reshape((channel_count, nz))
+        lower = _apply_inverse_lower_block(state, operator_data)
+        return lower.ravel()
+
+    inverse_lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+        (state_size, state_size),
+        _apply_inverse_lower,
+        dtype=np.complex128,  # type: ignore[assignment]
+    )
+
+    def _apply_upper(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        state = flat_state.reshape((channel_count, nz))
+        upper = _apply_upper_block(state, operator_data)
+        return upper.ravel()
+
+    upper = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+        (state_size, state_size),
+        _apply_upper,
+        dtype=np.complex128,  # type: ignore[assignment]
+    )
+    return inverse_lower, upper
 
 
 def _apply_upper_block(
@@ -495,10 +527,10 @@ def _apply_upper_block(
     """
     result = np.zeros(state_vector.shape, dtype=np.complex128)
     # Skip j=0, the specular channel, since it is included in the preconditioner
-    for j in range(1, operator_data.channel_count):
-        j_minus_1 = j - 1
-        pairs = operator_data.potential_pairs[j_minus_1, j:, :]
-        result[:, j_minus_1] = np.einsum("ik,ki->k", pairs, state_vector[:, j:])
+    for channel in range(1, operator_data.channel_count):
+        j_minus_1 = channel - 1
+        pairs = operator_data.potential_pairs[j_minus_1, channel:, :]
+        result[j_minus_1, :] = np.einsum("ik,ik->k", pairs, state_vector[channel:, :])
     return result
 
 
@@ -518,7 +550,7 @@ def _apply_specular_operator(
     transformed_state = np.einsum(
         "lk,l->k",
         operator_data.eigenvectors,
-        state_vector[:, channel_idx],
+        state_vector[channel_idx, :],
     )
     # apply the (H_0 - E_alpha)^(-1) operator
     transformed_state /= (
@@ -526,7 +558,7 @@ def _apply_specular_operator(
         + operator_data.eigenvalues
     )
     # Convert back to initial basis
-    state_vector[:, channel_idx] = np.einsum(
+    state_vector[channel_idx, :] = np.einsum(
         "kl,l->k",
         operator_data.eigenvectors,
         transformed_state,
@@ -550,9 +582,6 @@ def _apply_boundary_corrections(
     We have the result of (H_0 - E_alpha)^(-1) psi, and we can
     therefore calculate the inverse using the Sherman-Morrison formula.
 
-
-
-
     Here,
      u is a vector with a 1 at the boundary and 0 elsewhere
      (H_0 - E_alpha)^(-1) C_i u_i is simply lower_block_factors[:, i]
@@ -567,8 +596,8 @@ def _apply_boundary_corrections(
 
     with denom = 1.0 - (v_i^T (H_0 - E_alpha)^(-1) C_i u_i)
 
-    where v_i^T (H_0 - E_alpha)^(-1) psi is state_vector[-1, channel_idx]
-          (H_0 - E_alpha)^(-1) psi  is state_vector[:, channel_idx]
+    where v_i^T (H_0 - E_alpha)^(-1) psi is state_vector[channel_idx, -1]
+          (H_0 - E_alpha)^(-1) psi  is state_vector[channel_idx, :]
 
     """
     denom = 1.0 - (
@@ -576,11 +605,11 @@ def _apply_boundary_corrections(
         * operator_data.outgoing_log_derivative_wave[channel_idx]
     )
     fac = (
-        state_vector[-1, channel_idx]
+        state_vector[channel_idx, -1]
         * operator_data.outgoing_log_derivative_wave[channel_idx]
         / denom
     )
-    state_vector[:, channel_idx] += (
+    state_vector[channel_idx, :] += (
         fac * operator_data.lower_block_factors[:, channel_idx]
     )
 
@@ -628,16 +657,16 @@ def _apply_inverse_lower_block(
     """
     solved = state_vector.copy()
 
-    for j in range(operator_data.channel_count):
+    for channel in range(operator_data.channel_count):
         # subtract V^lower_ij out_j
-        pairs = operator_data.potential_pairs[j, :j, :]
-        solved[:, j] -= np.einsum("ik,ki->k", pairs, solved[:, :j])
+        pairs = operator_data.potential_pairs[channel, :channel, :]
+        solved[channel, :] -= np.einsum("ik,ik->k", pairs, solved[:channel, :])
 
         # Apply D^(-1)_i
         _apply_uncoupled_inverse_lower_block_operator(
             solved,
             operator_data,
-            channel_idx=j,
+            channel_idx=channel,
         )
 
     return solved
@@ -765,47 +794,21 @@ def _run_multiscat_scipy(  # noqa: PLR0913
     parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
 ) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
     nkx, nky, nz = potential_values.shape
-    channel_count = nkx * nky
-    operator_data = _build_scipy_operator_data(
+
+    inverse_lower, upper = _build_scipy_operators(
         potential_values,
         perpendicular_kinetic_difference,
         outgoing_log_derivative_wave,
         parallel_kinetic_energy,
     )
 
-    def _apply_inverse_lower(
-        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
-    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
-        state = flat_state.reshape((channel_count, nz)).T
-        lower = _apply_inverse_lower_block(state, operator_data)
-        return lower.T.reshape((-1,))
-
-    inverse_lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
-        (channel_count * nz, channel_count * nz),
-        _apply_inverse_lower,
-        dtype=np.complex128,  # type: ignore[assignment]
-    )
-
-    def _apply_upper(
-        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
-    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
-        state = flat_state.reshape((channel_count, nz)).T
-        upper = _apply_upper_block(state, operator_data)
-        return upper.T.reshape((-1,))
-
-    upper = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
-        (channel_count * nz, channel_count * nz),
-        _apply_upper,
-        dtype=np.complex128,  # type: ignore[assignment]
-    )
-
     # Prepare the initial guess
     # This is the initial state with only the incoming wave in the specular channel.
-    initial_state = np.zeros((nz, channel_count), dtype=np.complex128)
-    initial_state[-1, operator_data.specular_channel] = b_wave[0, 0]
+    initial_state = np.zeros((nkx, nky, nz), dtype=np.complex128)
+    initial_state[0, 0, -1] = b_wave[0, 0]
 
     solution = _run_gauss_seidel_gradient_decent(  # cspell: disable-line
-        initial_state=initial_state.T.ravel(),
+        initial_state=initial_state.ravel(),
         inverse_lower=inverse_lower,
         upper=upper,
         config=config,
