@@ -8,8 +8,8 @@ from slate_core import plot
 from slate_quantum import operator
 
 from multiscat.basis import scattering_metadata_from_stacked_delta_x
-from multiscat.config import ScatteringCondition
-from multiscat.multiscat import get_scattered_state
+from multiscat.config import OptimizationConfig, ScatteringCondition
+from multiscat.multiscat import get_scattering_matrix
 
 HELIUM_MASS = physical_constants["alpha particle mass"][0]
 UNIT_CELL = 8 * angstrom
@@ -44,14 +44,10 @@ if __name__ == "__main__":
             MORSE_PARAMETERS,
         ),
     )
-    state = get_scattered_state(condition)
-    fig, ax, _anim0 = plot.animate_data_2d(state, axes=(0, 2, 1), measure="abs")
-    ax.set_title(
-        (
-            "The scattered state,\n"
-            f"in a lobatto basis with ({state.basis.metadata().shape}) points"
-        ),
-    )
+    config = OptimizationConfig(precision=1e-5, max_iterations=1000)
+    s_matrix = get_scattering_matrix(condition, config, backend="scipy")
+    fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs")
+    ax.set_title("The scattering matrix")
     fig.show()
 
     # TODO: get S matrix from result and plot it...  # noqa: FIX002
