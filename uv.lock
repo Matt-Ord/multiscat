@@ -163,7 +163,6 @@ name = "multiscat"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "multiscat-fortran" },
     { name = "numpy" },
     { name = "scipy" },
     { name = "slate-core" },
@@ -178,11 +177,14 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+fortran = [
+    { name = "multiscat-fortran" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.9.1,<4.0.0" },
-    { name = "multiscat-fortran", directory = "lib/multiscat_fortran" },
+    { name = "multiscat-fortran", marker = "extra == 'fortran'", directory = "lib/multiscat_fortran" },
     { name = "numpy", specifier = ">=2.0.0,<3.0.0" },
     { name = "pyright", marker = "extra == 'dev'", specifier = "==1.1.400" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.2,<9.0.0" },
@@ -192,7 +194,7 @@ requires-dist = [
     { name = "slate-quantum", git = "https://github.com/Matt-Ord/slate_quantum.git?rev=8775660" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["fortran", "dev"]
 
 [[package]]
 name = "multiscat-fortran"

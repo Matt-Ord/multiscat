@@ -4,9 +4,33 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
-from multiscat_fortran import (
-    run_multiscat_fortran,
-)
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+try:
+    from multiscat_fortran import (  # type: ignore[optional]
+        run_multiscat_fortran,  # type: ignore[optional]
+    )
+except ImportError:
+
+    def run_multiscat_fortran(  # noqa: PLR0913
+        gmres_preconditioner_flag: int,  # noqa: ARG001
+        convergence_significant_figures: int,  # noqa: ARG001
+        potential_values: NDArray[np.complex128],  # noqa: ARG001
+        perpendicular_kinetic_difference: NDArray[np.float64],  # noqa: ARG001
+        wave_a: NDArray[np.complex128],  # noqa: ARG001
+        wave_b: NDArray[np.complex128],  # noqa: ARG001
+        wave_c: NDArray[np.complex128],  # noqa: ARG001
+        parallel_kinetic_energy: NDArray[np.float64],  # noqa: ARG001
+    ) -> NDArray[np.complex128]:
+        msg = (
+            "Multiscat Fortran code is not available."
+            " Please ensure that the Fortran package is installed."
+        )
+        raise ImportError(msg)
+
+
 from scipy.constants import (  # type: ignore[import-untyped]
     angstrom,
     atomic_mass,
@@ -51,6 +75,17 @@ if TYPE_CHECKING:
 
     from multiscat.config import OptimizationConfig, ScatteringCondition
     from multiscat.interpolate import ScatteringOperator
+
+    def run_multiscat_fortran(  # noqa: PLR0913
+        gmres_preconditioner_flag: int,
+        convergence_significant_figures: int,
+        potential_values: NDArray[np.complex128],
+        perpendicular_kinetic_difference: NDArray[np.float64],
+        wave_a: NDArray[np.complex128],
+        wave_b: NDArray[np.complex128],
+        wave_c: NDArray[np.complex128],
+        parallel_kinetic_energy: NDArray[np.float64],
+    ) -> NDArray[np.complex128]: ...
 
 
 type KineticDifferenceOperatorBasis[

@@ -11,10 +11,10 @@ dependencies = [
     "slate_core @ git+https://github.com/Matt-Ord/slate.git@58261ad",
     "slate_quantum @ git+https://github.com/Matt-Ord/slate_quantum.git@8775660",
     "tqdm>=4.67.1",
-    "multiscat_fortran",
 ]
 
 [project.optional-dependencies]
+fortran = ["multiscat_fortran"]
 dev = [
     "ruff",
     "pyright ==1.1.400",
