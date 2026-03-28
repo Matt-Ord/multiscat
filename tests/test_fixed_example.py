@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-# pyright: reportPrivateUsage=false
 import math
 import re
+
+# pyright: reportPrivateUsage=false
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,12 +18,11 @@ from multiscat_fortran import (
 )
 from scipy.constants import (  # type: ignore[import-untyped]
     angstrom,
-    atomic_mass,
     electron_volt,
-    hbar,
     physical_constants,
 )
 from slate_core import EvenlySpacedLengthMetadata, array, basis
+from slate_core.metadata import LobattoSpacedLengthMetadata
 from slate_quantum import operator
 
 from multiscat.basis import (
@@ -39,12 +39,11 @@ from multiscat.multiscat import (
     _get_outgoing_log_derivative_wave,
     _get_parallel_kinetic_energy,
     _get_perpendicular_kinetic_difference,
-    _potential_parameters,
     get_scattering_matrix,
 )
 
 if TYPE_CHECKING:
-    from slate_core.metadata import AxisDirections, LobattoSpacedLengthMetadata
+    from slate_core.metadata import AxisDirections
 
     from multiscat.interpolate import ScatteringOperator
 
@@ -163,53 +162,44 @@ def _fortran_backend_inputs(
     np.ndarray[Any, np.dtype[np.complex128]],
     np.ndarray[Any, np.dtype[np.complex128]],
 ]:
-    mass_amu, incident_kx, incident_ky, incident_kz = _condition_parameters(condition)
-    (
-        _nkx,
-        _nky,
-        nz,
-        unit_cell_ax,
-        unit_cell_ay,
-        unit_cell_bx,
-        unit_cell_by,
-        zmin,
-        zmax,
-        potential_values,
-        _,
-    ) = _potential_parameters(condition.potential)
+    (incident_k, potential_values, metadata_xy, metadata_z) = _condition_parameters(
+        condition,
+    )
+
+    directions = metadata_xy.extra.vectors
+    x_vector = np.asarray(directions[0]) * metadata_xy.children[0].domain.delta
+    y_vector = np.asarray(directions[1]) * metadata_xy.children[1].domain.delta
+    ax_angstrom = float(x_vector[0])
+    ay_angstrom = float(x_vector[1])
+    bx_angstrom = float(y_vector[0])
+    by_angstrom = float(y_vector[1])
 
     perpendicular_kinetic_difference_raw = get_perpendicular_kinetic_difference(
-        incident_kx,
-        incident_ky,
-        incident_kz,
+        *incident_k,
         nx=potential_values.shape[0],
         ny=potential_values.shape[1],
-        unit_cell_ax=unit_cell_ax,
-        unit_cell_ay=unit_cell_ay,
-        unit_cell_bx=unit_cell_bx,
-        unit_cell_by=unit_cell_by,
+        unit_cell_ax=ax_angstrom,
+        unit_cell_ay=ay_angstrom,
+        unit_cell_bx=bx_angstrom,
+        unit_cell_by=by_angstrom,
     )
     parallel_kinetic_energy_raw = get_parallel_kinetic_energy(
-        zmin=zmin,
-        zmax=zmax,
-        nz=nz,
+        zmin=metadata_z.domain.start,
+        zmax=metadata_z.domain.end,
+        nz=metadata_z.fundamental_size,
     )
 
     wave_a_raw, wave_b_raw, wave_c_raw = get_abc_arrays(
-        zmin=zmin,
-        zmax=zmax,
+        zmin=metadata_z.domain.start,
+        zmax=metadata_z.domain.end,
         nx=potential_values.shape[0],
         ny=potential_values.shape[1],
         perpendicular_kinetic_difference=perpendicular_kinetic_difference_raw,
-        n_z_points=nz,
-    )
-    hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
-    scaled_potential_values = np.asfortranarray(
-        potential_values * ((2.0 * mass_amu) / hbar_squared),
+        n_z_points=metadata_z.fundamental_size,
     )
 
     return (
-        np.asarray(scaled_potential_values, dtype=np.complex128),
+        np.asarray(potential_values, dtype=np.complex128),
         np.asarray(perpendicular_kinetic_difference_raw, dtype=np.float64),
         np.asarray(parallel_kinetic_energy_raw, dtype=np.float64),
         np.asarray(wave_a_raw, dtype=np.complex128),
@@ -279,7 +269,7 @@ def _rotated_example_condition() -> tuple[
         mass=HELIUM_MASS,
         energy=20 * electron_volt * 10**-3,
         theta=np.deg2rad(30),
-        phi=rotation,
+        phi=0,
         potential=operator.build.corrugated_morse_potential(
             metadata,
             MORSE_PARAMETERS,
@@ -394,18 +384,11 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
 def test_python_abc_arrays_match_fortran() -> None:
     condition, _ = _simple_example_condition()
     (
-        _nkx,
-        _nky,
-        _nz,
-        _unit_cell_ax,
-        _unit_cell_ay,
-        _unit_cell_bx,
-        _unit_cell_by,
-        _zmin,
-        _zmax,
-        _potential_values,
+        _,
+        _,
+        _,
         metadata_z,
-    ) = _potential_parameters(condition.potential)
+    ) = _condition_parameters(condition)
     (
         _scaled_potential_values,
         perpendicular_kinetic_difference,
@@ -416,12 +399,18 @@ def test_python_abc_arrays_match_fortran() -> None:
     ) = _fortran_backend_inputs(condition)
 
     wave_c_python = _get_outgoing_log_derivative_wave(
-        metadata_z,
+        LobattoSpacedLengthMetadata(
+            metadata_z.fundamental_size + 1,
+            domain=metadata_z.domain,
+        ),
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
     )
 
     wave_a_python, wave_b_python = _get_ab_waves(
-        metadata_z,
+        LobattoSpacedLengthMetadata(
+            metadata_z.fundamental_size + 1,
+            domain=metadata_z.domain,
+        ),
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
     )
 
@@ -544,12 +533,12 @@ def test_perpendicular_kinetic_difference_matches_fortran() -> None:
     metadata = condition.metadata
     nx, ny, _ = metadata.shape
 
+    metadata_x01, _ = split_scattering_metadata(metadata)
     expected = _get_perpendicular_kinetic_difference(
         condition.incident_k,
-        metadata,
-    ).reshape((nx, ny))
+        metadata_x01,
+    )
 
-    metadata_x01, _ = split_scattering_metadata(metadata)
     directions = metadata.extra.vectors
     x_vector = np.asarray(directions[0]) * metadata_x01.children[0].domain.delta
     y_vector = np.asarray(directions[1]) * metadata_x01.children[1].domain.delta
