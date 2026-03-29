@@ -5,6 +5,8 @@ import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
 
+from multiscat.config import UnitSystem, with_units  # type: ignore[import-untyped]
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -31,12 +33,6 @@ except ImportError:
         raise ImportError(msg)
 
 
-from scipy.constants import (  # type: ignore[import-untyped]
-    angstrom,
-    atomic_mass,
-    electron_volt,
-    hbar,
-)
 from slate_core import (
     Array,
     Basis,
@@ -49,7 +45,6 @@ from slate_core import (
 from slate_core.basis import AsUpcast, ContractedBasis
 from slate_core.metadata import (
     AxisDirections,
-    Domain,
     EvenlySpacedLengthMetadata,
     LobattoSpacedLengthMetadata,
     LobattoSpacedMetadata,
@@ -216,51 +211,20 @@ def _condition_parameters[
     ],
     LobattoSpacedLengthMetadata,
 ]:
-    scattering_vector = np.asarray(condition.incident_k)
-    scattering_magnitude = float(np.linalg.norm(scattering_vector))
-    if scattering_magnitude <= 0:
-        msg = "Incident wavevector magnitude must be non-zero"
-        raise ValueError(msg)
-
-    kx, ky, kz = condition.incident_k
-
-    potential = _raw_potential_in_input_file_convention(condition.potential)
-    hbar_squared = (hbar**2 / (atomic_mass * electron_volt * angstrom**2)) * 1e3
-    mass_amu = float(condition.mass / atomic_mass)
-    potential = potential * ((2.0 * mass_amu) / hbar_squared)
-
-    metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
-
-    return (
-        (kx * angstrom, ky * angstrom, kz * angstrom),
-        potential,
-        TupleMetadata(
-            (
-                EvenlySpacedLengthMetadata(
-                    metadata_x01.shape[0],
-                    domain=Domain(
-                        start=0,
-                        delta=metadata_x01.children[0].domain.delta / angstrom,
-                    ),
-                ),
-                EvenlySpacedLengthMetadata(
-                    metadata_x01.shape[1],
-                    domain=Domain(
-                        start=0,
-                        delta=metadata_x01.children[1].domain.delta / angstrom,
-                    ),
-                ),
-            ),
-            metadata_x01.extra,
-        ),
-        LobattoSpacedLengthMetadata(
-            fundamental_size=metadata_z.fundamental_size,
-            domain=Domain(
-                start=metadata_z.domain.start / angstrom,
-                delta=metadata_z.domain.delta / angstrom,
-            ),
+    converted_condition = with_units(
+        condition,
+        UnitSystem(
+            angstrom=1.0,
+            atomic_mass=0.5 * condition.units.atomic_mass / condition.mass,
+            hbar=1.0,
         ),
     )
+    # In these units, the kinetic energy is simply k^2
+    assert converted_condition.mass == (1 / 2)  # noqa: S101
+
+    potential = _potential_as_array(converted_condition.potential)
+    metadata_x01, metadata_z = split_scattering_metadata(converted_condition.metadata)
+    return (converted_condition.incident_k, potential, metadata_x01, metadata_z)
 
 
 def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int]:
@@ -276,7 +240,7 @@ def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int]:
     )
 
 
-def _raw_potential_in_input_file_convention(
+def _potential_as_array(
     potential: ScatteringOperator[
         EvenlySpacedLengthMetadata,
         LobattoSpacedLengthMetadata,
@@ -288,11 +252,8 @@ def _raw_potential_in_input_file_convention(
     basis_weights = potential_diagonal.basis.metadata().children[2].basis_weights
     basis = close_coupling_basis(potential_diagonal.basis.metadata())
 
-    data = potential_diagonal.with_basis(basis).raw_data
-    data = data.reshape((nx, ny, nz)) * basis_weights[np.newaxis, np.newaxis, :]
-
-    # Multiscat uses natural units, and a different normalization convention
-    return data / (electron_volt * 10**-3 * np.sqrt(nx * ny))
+    data = potential_diagonal.with_basis(basis).raw_data.reshape((nx, ny, nz))
+    return data * basis_weights[np.newaxis, np.newaxis, :] / np.sqrt(nx * ny)
 
 
 def get_scattering_matrix_from_state[
@@ -856,12 +817,7 @@ def get_scattering_matrix[
         incident_k,
         metadata_xy,
     )
-    # Note: here we differ by conventions for n_z.
-    # The outer python code assumes n_z includes the boundary,
-    # whereas the inner fortran code assumes n_z does not include the boundary.
-    parallel_kinetic_energy = -_get_parallel_kinetic_energy(
-        metadata=metadata_z,
-    )
+    parallel_kinetic_energy = -_get_parallel_kinetic_energy(metadata_z)
 
     a_wave, b_wave = _get_ab_waves(
         metadata_z,
