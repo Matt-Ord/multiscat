@@ -12,11 +12,11 @@ if TYPE_CHECKING:
 
 try:
     from multiscat_fortran import (  # type: ignore[optional]
-        run_multiscat_fortran,  # type: ignore[optional]
+        run_multiscat_fortran as run_multiscat_fortran_raw,  # type: ignore[optional]
     )
 except ImportError:
 
-    def run_multiscat_fortran(  # noqa: PLR0913
+    def run_multiscat_fortran_raw(  # noqa: PLR0913
         gmres_preconditioner_flag: int,  # noqa: ARG001
         convergence_significant_figures: int,  # noqa: ARG001
         potential_values: NDArray[np.complex128],  # noqa: ARG001
@@ -51,7 +51,7 @@ from slate_core.metadata import (
 )
 from slate_core.metadata.volume import fundamental_stacked_k_points
 from slate_core.util import timed
-from slate_quantum import Operator, State
+from slate_quantum import Operator
 from slate_quantum.operator import OperatorMetadata, operator_basis
 from tqdm import tqdm
 
@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from multiscat.config import OptimizationConfig, ScatteringCondition
     from multiscat.interpolate import ScatteringOperator
 
-    def run_multiscat_fortran(  # noqa: PLR0913
+    def run_multiscat_fortran_raw(  # noqa: PLR0913
         gmres_preconditioner_flag: int,
         convergence_significant_figures: int,
         potential_values: NDArray[np.complex128],
@@ -133,12 +133,7 @@ def _get_parallel_kinetic_energy(
     ).raw_data.reshape((metadata.fundamental_size, metadata.fundamental_size))
 
 
-def _get_perpendicular_kinetic_difference[
-    M0: TupleMetadata[
-        tuple[EvenlySpacedLengthMetadata, EvenlySpacedLengthMetadata],
-        AxisDirections,
-    ],
-](
+def _get_perpendicular_kinetic_difference(
     incident_k: tuple[float, float, float],
     metadata: TupleMetadata[
         tuple[EvenlySpacedLengthMetadata, EvenlySpacedLengthMetadata],
@@ -211,20 +206,10 @@ def _condition_parameters[
     ],
     LobattoSpacedLengthMetadata,
 ]:
-    converted_condition = with_units(
-        condition,
-        UnitSystem(
-            angstrom=1.0,
-            atomic_mass=0.5 * condition.units.atomic_mass / condition.mass,
-            hbar=1.0,
-        ),
-    )
-    # In these units, the kinetic energy is simply k^2
-    assert converted_condition.mass == (1 / 2)  # noqa: S101
 
-    potential = _potential_as_array(converted_condition.potential)
-    metadata_x01, metadata_z = split_scattering_metadata(converted_condition.metadata)
-    return (converted_condition.incident_k, potential, metadata_x01, metadata_z)
+    potential = _potential_as_array(condition.potential)
+    metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
+    return (condition.incident_k, potential, metadata_x01, metadata_z)
 
 
 def _optimization_parameters(config: OptimizationConfig) -> tuple[int, int]:
@@ -246,7 +231,7 @@ def _potential_as_array(
         LobattoSpacedLengthMetadata,
         AxisDirections,
     ],
-) -> np.ndarray[Any, np.dtype[np.complex128]]:
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
     potential_diagonal = array.extract_diagonal(potential)
     nx, ny, nz = potential_diagonal.basis.metadata().shape
     basis_weights = potential_diagonal.basis.metadata().children[2].basis_weights
@@ -256,30 +241,17 @@ def _potential_as_array(
     return data * basis_weights[np.newaxis, np.newaxis, :] / np.sqrt(nx * ny)
 
 
-def get_scattering_matrix_from_state[
+def get_scattered_intensity[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
 ](
-    state: State[CloseCouplingBasis[M0, M1, E]],
-) -> Array[
-    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
-    np.dtype[np.complexfloating],
-]:
-    """Get the scattering matrix for a given scattered state."""
-    metadata_x01, _ = split_scattering_metadata(state.basis.metadata())
-    return Array(
-        AsUpcast(basis.from_metadata(metadata_x01), metadata_x01),
-        state.as_array()[:, :, -1],
-    )
-
-
-def get_scattered_intensity(
     solution: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
-    a_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    b_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    condition: ScatteringCondition[M0, M1, E],
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     """Recover per-channel intensities from the optimized scattered state."""
+    a_wave, b_wave = get_ab_wave_for_condition(condition)
+
     surface_solution = solution[:, :, -1]
     # b_wave is the inverse of the outgoing wave amplitude
     # b_wave is equal to o(r)^(-1)
@@ -292,6 +264,19 @@ def get_scattered_intensity(
     return np.abs(surface_state) ** 2
 
 
+def _get_b_wave(
+    metadata: LobattoSpacedMetadata,
+    energy: float,
+) -> complex:
+    """Get the inverse of outgoing wave amplitude, for a channel with a given energy."""
+    open_channel = energy < 0.0
+    if not open_channel:
+        return 0
+    dk = np.sqrt(np.abs(energy))
+    theta = dk * (metadata.delta - metadata.domain.start)
+    return np.sqrt(dk) * np.exp(-1j * theta) * metadata.basis_weights[-1]
+
+
 def _get_ab_waves(
     metadata: LobattoSpacedMetadata,
     perpendicular_kinetic_difference: np.ndarray[
@@ -302,7 +287,12 @@ def _get_ab_waves(
     np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     np.ndarray[tuple[int, int], np.dtype[np.complex128]],
 ]:
-    """Get the asymptotic initial state and final scattered state amplitude factors."""
+    """
+    Get the asymptotic initial state and final scattered state amplitude factors.
+
+    Here a_wave is the amplitude of the incoming wave, i(r)
+    and b_wave is the inverse of the amplitude of the outgoing wave, o(r)^(-1).
+    """
     nkx, nky = perpendicular_kinetic_difference.shape
     channel_energy = perpendicular_kinetic_difference.ravel(order="C")
     dk = np.sqrt(np.abs(channel_energy))
@@ -323,6 +313,25 @@ def _get_ab_waves(
 
     b_wave = b_wave * metadata.basis_weights[-1]
     return (a_wave.reshape((nkx, nky)), b_wave.reshape((nkx, nky)))
+
+
+def get_ab_wave_for_condition[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+) -> tuple[
+    np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+]:
+    """Get the asymptotic initial state and final scattered state amplitude factors."""
+    metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
+    perpendicular_kinetic_difference = _get_perpendicular_kinetic_difference(
+        condition.incident_k,
+        metadata_x01,
+    )
+    return _get_ab_waves(metadata_z, perpendicular_kinetic_difference)
 
 
 def _get_outgoing_log_derivative_wave(
@@ -400,10 +409,6 @@ def _build_lower_block_factors(
 
 @dataclass(frozen=True)
 class _ScipyOperatorData:
-    nkx: int
-    nky: int
-    nz: int
-    specular_channel: int
     potential_pairs: np.ndarray[Any, np.dtype[np.complex128]]
     eigenvalues: np.ndarray[Any, np.dtype[np.float64]]
     eigenvectors: np.ndarray[Any, np.dtype[np.float64]]
@@ -416,15 +421,21 @@ class _ScipyOperatorData:
         return self.perpendicular_kinetic_difference.size
 
 
-def _build_scipy_operators(
-    potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
-    perpendicular_kinetic_difference: np.ndarray[
-        tuple[int, int],
-        np.dtype[np.float64],
-    ],
-    outgoing_log_derivative_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+def _build_scipy_operators[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
 ) -> tuple[LinearOperator, LinearOperator]:
+    # This is where most of the bad code lives.
+    # Operator Data is legacy (from before using a LinearOperator)
+    # And this should be removed / simplified in the future.
+    # Ideally, we should clean this up, and add channel
+    # filtering (ie discarding channels with very high kinetic energy,
+    # maybe specify n_channels)
+    # We should also build lower block factors when we define inverse_lower
+    potential_values = _potential_as_array(condition.potential)
     nkx, nky, nz = potential_values.shape
 
     idx_x, idx_y = np.meshgrid(np.arange(nkx), np.arange(nky), indexing="ij")
@@ -434,17 +445,25 @@ def _build_scipy_operators(
     diff_y = (idx_y[:, np.newaxis] - idx_y[np.newaxis, :]) % nky
     potential_pairs = potential_values[diff_x, diff_y, :]
 
+    metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
+    perpendicular_kinetic_difference = _get_perpendicular_kinetic_difference(
+        condition.incident_k,
+        metadata_x01,
+    )
+    parallel_kinetic_energy = -_get_parallel_kinetic_energy(metadata_z)
+
     eigenvalues, lower_block_factors, eigenvectors = _build_lower_block_factors(
         potential_values=potential_values,
         channel_energy=perpendicular_kinetic_difference.ravel(),
         parallel_kinetic_energy=parallel_kinetic_energy,
     )
 
+    outgoing_log_derivative_wave = _get_outgoing_log_derivative_wave(
+        metadata_z,
+        perpendicular_kinetic_difference,
+    )
+
     operator_data = _ScipyOperatorData(
-        nkx=nkx,
-        nky=nky,
-        nz=nz,
-        specular_channel=0,
         potential_pairs=potential_pairs,
         eigenvalues=eigenvalues,
         eigenvectors=eigenvectors,
@@ -748,48 +767,58 @@ def _run_gauss_seidel_gradient_decent(  # cspell: disable-line
             f"restart={restart})."
         )
         raise RuntimeError(msg)
-
+    # TODO: we should probably return the actual state  # noqa: FIX002
+    # psi rather than L^{-1} psi, but this matches the original Fortran implementation.
     return solution
 
 
-def _run_multiscat_scipy(  # noqa: PLR0913
-    config: OptimizationConfig,
-    *,
-    potential_values: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
-    perpendicular_kinetic_difference: np.ndarray[
-        tuple[int, int],
-        np.dtype[np.float64],
-    ],
-    b_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    outgoing_log_derivative_wave: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    parallel_kinetic_energy: np.ndarray[tuple[int, int], np.dtype[np.float64]],
-) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
-    nkx, nky, nz = potential_values.shape
+def _get_initial_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+    """
+    Get the initial state for the scattering problem.
 
-    inverse_lower, upper = _build_scipy_operators(
-        potential_values,
-        perpendicular_kinetic_difference,
-        outgoing_log_derivative_wave,
-        parallel_kinetic_energy,
+    For now, our guess at the solution is the state with only the incoming wave in
+    the specular channel.
+    """
+    _metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
+    initial_state = np.zeros(condition.metadata.shape, dtype=np.complex128)
+    specular_perpendicular_kinetic_difference = -(condition.incident_k[2] ** 2)
+    initial_state[0, 0, -1] = _get_b_wave(
+        metadata_z,
+        specular_perpendicular_kinetic_difference,
     )
+    return initial_state.ravel()
 
-    # Prepare the initial guess
-    # This is the initial state with only the incoming wave in the specular channel.
-    initial_state = np.zeros((nkx, nky, nz), dtype=np.complex128)
-    initial_state[0, 0, -1] = b_wave[0, 0]
+
+def _run_multiscat_scipy[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+    config: OptimizationConfig,
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
+    # We split our hamiltonian into a lower block diagonal part L,
+    # and an upper part U which contains the off-diagonal coupling between channels.
+    inverse_lower, upper = _build_scipy_operators(condition)
+    initial_state = _get_initial_state(condition)
 
     solution = _run_gauss_seidel_gradient_decent(  # cspell: disable-line
-        initial_state=initial_state.ravel(),
+        initial_state=initial_state,
         inverse_lower=inverse_lower,
         upper=upper,
         config=config,
     )
 
-    return solution.reshape((nkx, nky, nz))
+    return solution.reshape(condition.metadata.shape)  # type: ignore[cant infer shape]
 
 
-@timed
-def get_scattering_matrix[
+def _run_multiscat_fortran[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
@@ -800,13 +829,7 @@ def get_scattering_matrix[
         E,
     ],
     config: OptimizationConfig,
-    *,
-    backend: Literal["fortran", "scipy"] = "fortran",
-) -> Array[
-    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
-    np.dtype[np.complex128],
-]:
-    """Run Multiscat through the f2py native binding."""
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
     (
         incident_k,
         potential,
@@ -829,38 +852,83 @@ def get_scattering_matrix[
         perpendicular_kinetic_difference,
     )
 
+    (
+        preconditioner_flag,
+        n_significant_figures,
+    ) = _optimization_parameters(config)
+    return run_multiscat_fortran_raw(
+        preconditioner_flag,
+        n_significant_figures,
+        potential_values=potential,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+        wave_a=a_wave.ravel(),
+        wave_b=b_wave.ravel(),
+        wave_c=outgoing_log_derivative_wave.ravel(),
+        parallel_kinetic_energy=parallel_kinetic_energy,
+    )
+
+
+def _as_natural_units[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[
+        M0,
+        M1,
+        E,
+    ],
+) -> ScatteringCondition[
+    EvenlySpacedLengthMetadata,
+    LobattoSpacedLengthMetadata,
+    AxisDirections,
+]:
+    out = with_units(
+        condition,
+        UnitSystem(
+            angstrom=1.0,
+            atomic_mass=0.5 * condition.units.atomic_mass / condition.mass,
+            hbar=1.0,
+        ),
+    )
+
+    # In these units, the kinetic energy is simply k^2
+    assert out.mass == (1 / 2)  # noqa: S101
+    return out
+
+
+@timed
+def get_scattering_matrix[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[
+        M0,
+        M1,
+        E,
+    ],
+    config: OptimizationConfig,
+    *,
+    backend: Literal["fortran", "scipy"] = "fortran",
+) -> Array[
+    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
+    np.dtype[np.complex128],
+]:
+    """Run Multiscat through the f2py native binding."""
+    converted_condition = _as_natural_units(condition)
+
     if backend == "fortran":
-        (
-            preconditioner_flag,
-            n_significant_figures,
-        ) = _optimization_parameters(config)
-        solution = run_multiscat_fortran(
-            preconditioner_flag,
-            n_significant_figures,
-            potential_values=potential,
-            perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-            wave_a=a_wave.ravel(),
-            wave_b=b_wave.ravel(),
-            wave_c=outgoing_log_derivative_wave.ravel(),
-            parallel_kinetic_energy=parallel_kinetic_energy,
-        )
+        solution = _run_multiscat_fortran(converted_condition, config)
     elif backend == "scipy":
-        solution = _run_multiscat_scipy(
-            config,
-            potential_values=potential,
-            perpendicular_kinetic_difference=perpendicular_kinetic_difference,
-            b_wave=b_wave,
-            outgoing_log_derivative_wave=outgoing_log_derivative_wave,
-            parallel_kinetic_energy=parallel_kinetic_energy,
-        )
+        solution = _run_multiscat_scipy(converted_condition, config)
     else:
         msg = f"Unknown backend '{backend}'. Expected 'fortran' or 'scipy'."
         raise ValueError(msg)
 
     channel_intensity_dense = get_scattered_intensity(
         solution,
-        a_wave,
-        b_wave,
+        converted_condition,
     )
 
     metadata_x01, _ = split_scattering_metadata(condition.metadata)

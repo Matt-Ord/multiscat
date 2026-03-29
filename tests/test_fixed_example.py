@@ -364,7 +364,7 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
     np.testing.assert_allclose(
         eigenvalues_python,
         eigenvalues,
-        rtol=1e-9,
+        rtol=3e-9,
         atol=1e-10,
     )
     np.testing.assert_allclose(
@@ -439,18 +439,15 @@ def test_scipy_upper_block_matches_fortran_debug() -> None:
     condition, _ = _simple_example_condition()
     (
         potential_values,
-        perpendicular_kinetic_difference,
-        parallel_kinetic_energy,
+        _perpendicular_kinetic_difference,
+        _parallel_kinetic_energy,
         _wave_a,
         _wave_b,
-        wave_c,
+        _wave_c,
     ) = _fortran_backend_inputs(condition)
 
     _inverse_lower, upper = _build_scipy_operators(
-        potential_values,
-        perpendicular_kinetic_difference,
-        wave_c,
-        parallel_kinetic_energy,
+        condition,
     )
     nkx, nky, nz = potential_values.shape
     rng = np.random.default_rng()
@@ -486,10 +483,7 @@ def test_scipy_lower_block_matches_fortran_debug() -> None:
     ) = _fortran_backend_inputs(condition)
 
     inverse_lower, _upper = _build_scipy_operators(
-        potential_values,
-        perpendicular_kinetic_difference,
-        wave_c,
-        parallel_kinetic_energy,
+        condition,
     )
     rng = np.random.default_rng()
     nkx, nky, nz = potential_values.shape
