@@ -52,7 +52,7 @@
 						"name": "scipy",
 						"depth": 2
 					}
-				],
+				]
 			},
 			"extensions": [
 				"donjayamanne.python-extension-pack",

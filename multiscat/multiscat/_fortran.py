@@ -133,13 +133,17 @@ def run_multiscat_fortran[
 
     outgoing_log_derivative_wave = get_outgoing_log_derivative_wave(
         metadata_z,
-        perpendicular_kinetic_difference,
+        perpendicular_kinetic_difference.ravel(),
     )
 
     (
         preconditioner_flag,
         n_significant_figures,
     ) = _optimization_parameters(config)
+
+    if config.n_channels is not None:
+        msg = "Channel filtering is not yet implemented in fortran code"
+        raise NotImplementedError(msg)
     return run_multiscat_fortran_raw(
         preconditioner_flag,
         n_significant_figures,

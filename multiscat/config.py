@@ -47,6 +47,11 @@ class OptimizationConfig:
     which approximately inverts the problem when the non-specular
     scattering is small.
     """
+    n_channels: int | None = None
+    """
+    The number of channels to include in the scattering calculation.
+    If None, all channels are included.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -120,7 +125,7 @@ class ScatteringCondition[
     def incident_energy(self) -> float:
         """The incident energy in joules."""
         kx, ky, kz = self.incident_k
-        return (hbar**2 * (kx**2 + ky**2 + kz**2)) / (2 * self.mass)
+        return (self.units.hbar**2 * (kx**2 + ky**2 + kz**2)) / (2 * self.mass)
 
     @property
     def theta(self) -> float:

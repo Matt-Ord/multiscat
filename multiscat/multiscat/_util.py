@@ -145,18 +145,16 @@ def get_ab_wave_for_condition[
 def get_outgoing_log_derivative_wave(
     metadata: LobattoSpacedMetadata,
     perpendicular_kinetic_difference: np.ndarray[
-        tuple[int, int],
+        tuple[int],
         np.dtype[np.floating],
     ],
-) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
     """Get the outgoing channel logarithmic derivatives."""
-    nkx, nky = perpendicular_kinetic_difference.shape
-    channel_energy = perpendicular_kinetic_difference.ravel()
+    channel_energy = perpendicular_kinetic_difference
 
     out = 1j * np.emath.sqrt(-channel_energy)  # cspell: disable-line
 
-    out = out * metadata.basis_weights[-1] ** 2
-    return out.reshape((nkx, nky), order="C")
+    return out * metadata.basis_weights[-1] ** 2
 
 
 def potential_as_array(

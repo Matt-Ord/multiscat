@@ -417,7 +417,7 @@ def test_python_abc_arrays_match_fortran() -> None:
             metadata_z.fundamental_size + 1,
             domain=metadata_z.domain,
         ),
-        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference.ravel(),
     )
 
     wave_a_python, wave_b_python = _get_ab_waves(
@@ -442,7 +442,7 @@ def test_python_abc_arrays_match_fortran() -> None:
         atol=1e-12,
     )
     np.testing.assert_allclose(
-        wave_c_python,
+        np.array(wave_c_python).reshape(shape),
         np.asarray(wave_c_fortran, dtype=np.complex128).reshape(shape),
         rtol=1e-12,
         atol=1e-12,
