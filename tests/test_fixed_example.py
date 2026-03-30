@@ -31,15 +31,28 @@ from multiscat.basis import (
     split_scattering_metadata,
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
-from multiscat.multiscat import (
+from multiscat.multiscat._fortran import (
+    _condition_parameters,
+)
+from multiscat.multiscat._multiscat import (
+    get_scattering_matrix,
+)
+from multiscat.multiscat._scipy import (
     _build_lower_block_factors,
     _build_scipy_operators,
-    _condition_parameters,
-    _get_ab_waves,
-    _get_outgoing_log_derivative_wave,
-    _get_parallel_kinetic_energy,
-    _get_perpendicular_kinetic_difference,
-    get_scattering_matrix,
+    _solve_specular_hamiltonian,
+)
+from multiscat.multiscat._util import (
+    get_ab_waves as _get_ab_waves,
+)
+from multiscat.multiscat._util import (
+    get_outgoing_log_derivative_wave as _get_outgoing_log_derivative_wave,
+)
+from multiscat.multiscat._util import (
+    get_parallel_kinetic_energy as _get_parallel_kinetic_energy,
+)
+from multiscat.multiscat._util import (
+    get_perpendicular_kinetic_difference as _get_perpendicular_kinetic_difference,
 )
 
 if TYPE_CHECKING:
@@ -340,13 +353,14 @@ def test_scipy_preconditioner_matches_fortran_debug() -> None:
         _wave_b,
         _wave_c,
     ) = _fortran_backend_inputs(condition)
-
-    eigenvalues_python, lower_block_factors_python, eigenvectors_python = (
-        _build_lower_block_factors(
-            potential_values,
-            perpendicular_kinetic_difference.ravel(),
-            parallel_kinetic_energy,
-        )
+    eigenvalues_python, eigenvectors_python = _solve_specular_hamiltonian(
+        potential_values[0, 0],
+        parallel_kinetic_energy,
+    )
+    lower_block_factors_python = _build_lower_block_factors(
+        perpendicular_kinetic_difference.ravel(),
+        eigenvalues_python,
+        eigenvectors_python,
     )
 
     eigenvalues_raw, preconditioner_factors_raw, eigenvectors_raw = (
