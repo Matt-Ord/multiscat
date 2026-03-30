@@ -7,9 +7,8 @@ from scipy.constants import (  # type: ignore[import-untyped]
 from slate_core import plot
 from slate_quantum import operator
 
+from multiscat import OptimizationConfig, ScatteringCondition, get_scattering_matrix
 from multiscat.basis import scattering_metadata_from_stacked_delta_x
-from multiscat.config import OptimizationConfig, ScatteringCondition
-from multiscat.multiscat import get_scattering_matrix
 
 HELIUM_MASS = physical_constants["alpha particle mass"][0]
 HELIUM_ENERGY = 20 * electron_volt * 10**-3
