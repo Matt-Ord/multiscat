@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -13,7 +14,9 @@ from slate_core.metadata import (
 from multiscat.basis import (
     split_scattering_metadata,
 )
-from multiscat.multiscat._gmres import run_gauss_seidel_gradient_decent
+from multiscat.multiscat._gmres import (
+    run_gauss_seidel_gradient_decent,  # cspell: disable-line
+)
 from multiscat.multiscat._util import (
     get_b_wave,
     get_outgoing_log_derivative_wave,
@@ -87,11 +90,14 @@ def _apply_upper_block(
     transfer parallel to the corrugated surface.
     """
     result = np.zeros(state_vector.shape, dtype=np.complex128)
-    # Skip j=0, the specular channel, since it is included in the preconditioner
-    for channel in range(1, operator_data.channel_count):
-        j_minus_1 = channel - 1
-        pairs = operator_data.potential_pairs[j_minus_1, channel:, :]
-        result[j_minus_1, :] = np.einsum("ik,ik->k", pairs, state_vector[channel:, :])
+
+    for channel in range(state_vector.shape[0]):
+        pairs = operator_data.potential_pairs[channel, channel + 1 :, :]
+        result[channel, :] = np.einsum(
+            "ik,ik->k",
+            pairs,
+            state_vector[channel + 1 :, :],
+        )
     return result
 
 
@@ -218,7 +224,7 @@ def _apply_inverse_lower_block(
     """
     solved = state_vector.copy()
 
-    for channel in range(operator_data.channel_count):
+    for channel in range(state_vector.shape[0]):
         # subtract V^lower_ij out_j
         pairs = operator_data.potential_pairs[channel, :channel, :]
         solved[channel, :] -= np.einsum("ik,ik->k", pairs, solved[:channel, :])
@@ -242,10 +248,6 @@ class _ScipyOperatorData:
     lower_block_factors: np.ndarray[Any, np.dtype[np.float64]]
     outgoing_log_derivative_wave: np.ndarray[Any, np.dtype[np.complex128]]
 
-    @property
-    def channel_count(self) -> int:
-        return self.perpendicular_kinetic_difference.size
-
 
 def _build_scipy_operators[
     M0: EvenlySpacedLengthMetadata,
@@ -253,6 +255,8 @@ def _build_scipy_operators[
     E: AxisDirections,
 ](
     condition: ScatteringCondition[M0, M1, E],
+    *,
+    n_channels: int | None = None,
 ) -> tuple[LinearOperator, LinearOperator]:
     # This is where most of the bad code lives.
     # Operator Data is legacy (from before using a LinearOperator)
@@ -261,30 +265,47 @@ def _build_scipy_operators[
     # filtering (ie discarding channels with very high kinetic energy,
     # maybe specify n_channels)
     # We should also build lower block factors when we define inverse_lower
-    potential_values = potential_as_array(condition.potential)
-    nkx, nky, nz = potential_values.shape
-
-    idx_x, idx_y = np.meshgrid(np.arange(nkx), np.arange(nky), indexing="ij")
-    idx_x = idx_x.ravel()
-    idx_y = idx_y.ravel()
-    diff_x = (idx_x[:, np.newaxis] - idx_x[np.newaxis, :]) % nkx
-    diff_y = (idx_y[:, np.newaxis] - idx_y[np.newaxis, :]) % nky
-    potential_pairs = potential_values[diff_x, diff_y, :]
 
     metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
     perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
         condition.incident_k,
         metadata_x01,
-    )
-    parallel_kinetic_energy = -get_parallel_kinetic_energy(metadata_z)
+    ).ravel()
 
+    channel_idx = np.argsort(perpendicular_kinetic_difference)
+    if n_channels is not None:
+        channel_idx = channel_idx[:n_channels]
+
+    perpendicular_kinetic_difference = perpendicular_kinetic_difference[channel_idx]
+    if perpendicular_kinetic_difference[-1] < condition.incident_energy:
+        warnings.warn(
+            "The highest kinetic energy channel is below the incident energy. "
+            "This may lead to poor convergence. Consider increasing n_channels.",
+            UserWarning,
+            stacklevel=5,
+        )
+
+    potential_values = potential_as_array(condition.potential)
+    specular_potential = potential_values[0, 0].copy()
+    # We will treat the specular potential separately in the preconditioner
+    potential_values[0, 0] = 0.0
+
+    nkx, nky, nz = potential_values.shape
+    # The (ikx, iky) of each channel
+    cx, cy = np.unravel_index(channel_idx, (nkx, nky))
+    # Pairwise differences of channel indices
+    diff_x = (cx[:, np.newaxis] - cx[np.newaxis, :]) % nkx
+    diff_y = (cy[:, np.newaxis] - cy[np.newaxis, :]) % nky
+    potential_pairs = potential_values[diff_x, diff_y, :]
+
+    parallel_kinetic_energy = -get_parallel_kinetic_energy(metadata_z)
     eigenvalues, eigenvectors = _solve_specular_hamiltonian(
-        specular_potential=potential_values[0, 0],
+        specular_potential=specular_potential,
         parallel_kinetic_energy=parallel_kinetic_energy,
     )
 
     lower_block_factors = _build_lower_block_factors(
-        channel_energy=perpendicular_kinetic_difference.ravel(),
+        channel_energy=perpendicular_kinetic_difference,
         eigenvalues=eigenvalues,
         eigenvectors=eigenvectors,
     )
@@ -298,20 +319,20 @@ def _build_scipy_operators[
         potential_pairs=potential_pairs,
         eigenvalues=eigenvalues,
         eigenvectors=eigenvectors,
-        perpendicular_kinetic_difference=perpendicular_kinetic_difference.ravel(),
+        perpendicular_kinetic_difference=perpendicular_kinetic_difference,
         lower_block_factors=lower_block_factors,
-        outgoing_log_derivative_wave=outgoing_log_derivative_wave.ravel(),
+        outgoing_log_derivative_wave=outgoing_log_derivative_wave,
     )
-    channel_count = operator_data.channel_count
 
     state_size = np.prod((nkx, nky, nz))
 
     def _apply_inverse_lower(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
-        state = flat_state.reshape((channel_count, nz))
-        lower = _apply_inverse_lower_block(state, operator_data)
-        return lower.ravel()
+        out = flat_state.reshape((nkx * nky, nz), copy=True)
+        lower = _apply_inverse_lower_block(out[channel_idx], operator_data)
+        out[channel_idx] = lower
+        return out.ravel()
 
     inverse_lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (state_size, state_size),
@@ -322,9 +343,10 @@ def _build_scipy_operators[
     def _apply_upper(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
-        state = flat_state.reshape((channel_count, nz))
-        upper = _apply_upper_block(state, operator_data)
-        return upper.ravel()
+        out = flat_state.reshape((nkx * nky, nz), copy=True)
+        upper = _apply_upper_block(out[channel_idx], operator_data)
+        out[channel_idx] = upper
+        return out.ravel()
 
     upper = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (state_size, state_size),
@@ -367,7 +389,10 @@ def run_multiscat_scipy[
 ) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
     # We split our hamiltonian into a lower block diagonal part L,
     # and an upper part U which contains the off-diagonal coupling between channels.
-    inverse_lower, upper = _build_scipy_operators(condition)
+    inverse_lower, upper = _build_scipy_operators(
+        condition,
+        n_channels=config.n_channels,
+    )
     initial_state = _get_initial_state(condition)
 
     solution = run_gauss_seidel_gradient_decent(  # cspell: disable-line

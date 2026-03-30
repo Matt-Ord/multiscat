@@ -69,11 +69,13 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line
     linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (n_states, n_states),
         _apply_linear_operator,
+        dtype=np.complex128,  # type: ignore[type-arg],
     )
     preconditioner = (
         scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
             (n_states, n_states),
             _apply_neumann_preconditioner,
+            dtype=np.complex128,  # type: ignore[type-arg],
         )
         if config.use_neumann_preconditioner
         else None
