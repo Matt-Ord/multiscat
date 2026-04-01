@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from functools import cached_property
+from typing import TYPE_CHECKING, override
 
 import numpy as np
 from scipy.constants import (  # type: ignore[import-untyped]
@@ -10,7 +11,6 @@ from scipy.constants import (  # type: ignore[import-untyped]
 from scipy.constants import (  # type: ignore[import-untyped]
     atomic_mass as atomic_mass_si,
 )
-from scipy.constants import hbar  # type: ignore[import-untyped]
 from scipy.constants import (  # type: ignore[import-untyped]
     hbar as hbar_si,
 )
@@ -21,7 +21,7 @@ from slate_core.metadata import (
     LobattoSpacedLengthMetadata,
 )
 from slate_core.metadata.volume import fundamental_stacked_delta_x
-from slate_quantum import Operator
+from slate_quantum import Operator, operator
 from slate_quantum.operator import position_operator_basis
 
 from multiscat.basis import (
@@ -73,7 +73,9 @@ class UnitSystem:
         return (self.hbar**2) / (2 * self.atomic_mass * self.angstrom**2)
 
 
-@dataclass(frozen=True, kw_only=True)
+SI_UNITS = UnitSystem.si()
+
+
 class ScatteringCondition[
     M0: EvenlySpacedLengthMetadata = EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata = LobattoSpacedLengthMetadata,
@@ -81,18 +83,51 @@ class ScatteringCondition[
 ]:
     """Represents a particular scattering condition."""
 
-    mass: float
-    incident_k: tuple[float, float, float]
-    potential: ScatteringOperator[M0, M1, E]
-    units: UnitSystem = field(default_factory=UnitSystem.si)
+    _mass: float
+    _incident_k: tuple[float, float, float]
+    _potential: ScatteringOperator[M0, M1, E]
+    _units: UnitSystem = field(default_factory=UnitSystem.si)
+
+    def __init__(
+        self,
+        *,
+        mass: float,
+        incident_k: tuple[float, float, float],
+        potential: ScatteringOperator[M0, M1, E],
+        units: UnitSystem = SI_UNITS,
+    ) -> None:
+        self._mass = mass
+        self._incident_k = incident_k
+        self._potential = potential
+        self._units = units
+
+    @property
+    def mass(self) -> float:
+        """The mass of the particle in atomic mass units."""
+        return self._mass
+
+    @property
+    def incident_k(self) -> tuple[float, float, float]:
+        """The incident wavevector in inverse angstroms."""
+        return self._incident_k
+
+    @property
+    def potential(self) -> ScatteringOperator[M0, M1, E]:
+        """The scattering operator."""
+        return self._potential
+
+    @property
+    def units(self) -> UnitSystem:
+        """The unit system used for this scattering condition."""
+        return self._units
 
     @property
     def metadata(self) -> ScatteringBasisMetadata[M0, M1, E]:
         """The metadata for the scattering state."""
-        return self.potential.basis.metadata().children[0]
+        return self._potential.basis.metadata().children[0]
 
     @staticmethod
-    def from_angles[
+    def from_angles[  # noqa: PLR0913
         M01: EvenlySpacedLengthMetadata,
         M11: LobattoSpacedLengthMetadata,
         E1: AxisDirections,
@@ -103,22 +138,24 @@ class ScatteringCondition[
         phi: float = 0,
         energy: float,
         potential: ScatteringOperator[M01, M11, E1],
+        units: UnitSystem = SI_UNITS,
     ) -> ScatteringCondition[M01, M11, E1]:
         """
         Create a scattering condition from angles.
 
         All angles are in radians, and energy is in joules.
         """
-        # Energy = hbar**2 k**2 / (2 * mass)
-        abs_k = (2 * mass * energy) ** 0.5 / hbar
         return ScatteringCondition(
             mass=mass,
-            incident_k=(
-                abs_k * np.sin(theta) * np.cos(phi),
-                abs_k * np.sin(theta) * np.sin(phi),
-                abs_k * np.cos(theta),
+            incident_k=momentum_from_angles(
+                theta=theta,
+                phi=phi,
+                energy=energy,
+                mass=mass,
+                units=units,
             ),
             potential=potential,
+            units=units,
         )
 
     @property
@@ -138,6 +175,23 @@ class ScatteringCondition[
         """The azimuthal angle of the incident wavevector in radians."""
         kx, ky, _ = self.incident_k
         return np.arctan2(ky, kx)
+
+
+def momentum_from_angles(
+    theta: float,
+    phi: float,
+    energy: float,
+    mass: float,
+    *,
+    units: UnitSystem = SI_UNITS,
+) -> tuple[float, float, float]:
+    """Calculate the incident momentum from angles."""
+    abs_k = (2 * mass * energy) ** 0.5 / units.hbar
+    return (
+        abs_k * np.sin(theta) * np.cos(phi),
+        abs_k * np.sin(theta) * np.sin(phi),
+        abs_k * np.cos(theta),
+    )
 
 
 def _metadata_with_units(
@@ -207,3 +261,71 @@ def with_units[
         potential=_potential_with_units(condition.potential, condition.units, units),
         units=units,
     )
+
+
+class MorseScatteringCondition[
+    M0: EvenlySpacedLengthMetadata = EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata = LobattoSpacedLengthMetadata,
+    E: AxisDirections = AxisDirections,
+](ScatteringCondition[M0, M1, E]):
+    """Represents a particular scattering condition."""
+
+    _mass: float
+    _incident_k: tuple[float, float, float]
+    _units: UnitSystem = field(default_factory=UnitSystem.si)
+    _morse_parameters: operator.build.CorrugatedMorseParameters
+    _metadata: ScatteringBasisMetadata[M0, M1, E]
+
+    def __init__(
+        self,
+        *,
+        mass: float,
+        incident_k: tuple[float, float, float],
+        morse_parameters: operator.build.CorrugatedMorseParameters,
+        metadata: ScatteringBasisMetadata[M0, M1, E],
+        units: UnitSystem = SI_UNITS,
+    ) -> None:
+        self._mass = mass
+        self._incident_k = incident_k
+        self._morse_parameters = morse_parameters
+        self._metadata = metadata
+        self._units = units
+
+    @property
+    def morse_parameters(self) -> operator.build.CorrugatedMorseParameters:
+        """The parameters of the corrugated Morse potential."""
+        return self._morse_parameters
+
+    @property
+    @override
+    def mass(self) -> float:
+        return self._mass
+
+    @property
+    @override
+    def incident_k(self) -> tuple[float, float, float]:
+        return self._incident_k
+
+    @property
+    @override
+    def units(self) -> UnitSystem:
+        return self._units
+
+    @property
+    @override
+    def metadata(self) -> ScatteringBasisMetadata[M0, M1, E]:
+        return self._metadata
+
+    @cached_property
+    def _potential(self) -> ScatteringOperator[M0, M1, E]:  # type: ignore override private
+        """The scattering operator."""
+        return operator.build.corrugated_morse_potential(
+            self.metadata,
+            self.morse_parameters,
+        )
+
+    @property
+    @override
+    def potential(self) -> ScatteringOperator[M0, M1, E]:
+        """The scattering operator."""
+        return self._potential

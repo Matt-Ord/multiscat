@@ -102,7 +102,7 @@ def get_scattering_matrix[
         msg = f"Unknown backend '{backend}'. Expected 'fortran' or 'scipy'."
         raise ValueError(msg)
 
-    channel_intensity_dense = get_scattered_intensity(
+    channel_intensity = get_scattered_intensity(
         solution,
         converted_condition,
     )
@@ -110,5 +110,5 @@ def get_scattering_matrix[
     metadata_x01, _ = split_scattering_metadata(condition.metadata)
     return Array(
         AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
-        channel_intensity_dense.astype(np.complex128),
+        channel_intensity.astype(np.complex128),
     )
