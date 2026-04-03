@@ -10,9 +10,10 @@ if TYPE_CHECKING:
 
 
 def run_gauss_seidel_gradient_decent(  # cspell: disable-line
-    initial_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    initial_state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
     inverse_lower: scipy.sparse.linalg.LinearOperator,
     upper: scipy.sparse.linalg.LinearOperator,
+    lower: scipy.sparse.linalg.LinearOperator | None = None,
     *,
     config: OptimizationConfig,
 ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
@@ -24,8 +25,8 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line
     is closer to the identity.
 
     The input to this function is the initial guess at psi.
-    The output of this function is L^{-1} psi, we
-    can recover psi by applying the lower operator.
+    The output of this function is L^{-1} psi, or simply psi if the
+    lower operator is provided.
 
     Optionally, this probelm can be "double preconditioned"
     by applying a first-order Neumann series approximation to the operator
@@ -98,7 +99,7 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line
         "tuple[np.ndarray[Any, np.dtype[np.complex128]], int]",
         scipy.sparse.linalg.gmres(  # type: ignore[unknown]
             A=linear_operator,
-            b=inverse_lower(initial_state),
+            b=inverse_lower.matvec(initial_state),  # type: ignore[unknown]
             rtol=config.precision,
             restart=restart,
             maxiter=config.max_iterations,
@@ -116,6 +117,5 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line
             f"restart={restart})."
         )
         raise RuntimeError(msg)
-    # TODO: we should probably return the actual state  # noqa: FIX002
-    # psi rather than L^{-1} psi, but this matches the original Fortran implementation.
-    return solution
+
+    return solution if lower is None else cast("Any", lower.matvec(solution))  # type: ignore[unknown]

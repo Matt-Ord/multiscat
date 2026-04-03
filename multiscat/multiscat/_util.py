@@ -72,19 +72,6 @@ def get_perpendicular_kinetic_difference(
     return ((kx**2 + ky**2) - np.linalg.norm(incident_k) ** 2).reshape(metadata.shape)  # type: ignore[no-untyped-call]
 
 
-def get_b_wave(
-    metadata: LobattoSpacedMetadata,
-    energy: float,
-) -> complex:
-    """Get the inverse of outgoing wave amplitude, for a channel with a given energy."""
-    open_channel = energy < 0.0
-    if not open_channel:
-        return 0
-    dk = np.sqrt(np.abs(energy))
-    theta = dk * (metadata.delta - metadata.domain.start)
-    return np.sqrt(dk) * np.exp(-1j * theta) * metadata.basis_weights[-1]
-
-
 def get_ab_waves(
     metadata: LobattoSpacedMetadata,
     perpendicular_kinetic_difference: np.ndarray[

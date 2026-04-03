@@ -14,13 +14,16 @@ from slate_core.metadata import (
     LobattoSpacedLengthMetadata,
 )
 from slate_core.util import timed
+from slate_quantum import State
 
 from multiscat.basis import (
+    ScatteringBasisMetadata,
+    close_coupling_basis,
     split_scattering_metadata,
 )
 from multiscat.config import UnitSystem, with_units
 from multiscat.multiscat._fortran import run_multiscat_fortran
-from multiscat.multiscat._scipy import run_multiscat_scipy
+from multiscat.multiscat._scipy import get_scattering_state_scipy, run_multiscat_scipy
 from multiscat.multiscat._util import (
     get_ab_wave_for_condition,  # type: ignore[import-untyped]
 )
@@ -111,4 +114,26 @@ def get_scattering_matrix[
     return Array(
         AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
         channel_intensity.astype(np.complex128),
+    )
+
+
+@timed
+def get_scattering_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+    config: OptimizationConfig,
+) -> State[
+    Basis[ScatteringBasisMetadata[M0, M1, E]],
+    np.dtype[np.complex128],
+]:
+    """Run Multiscat through the f2py native binding."""
+    converted_condition = _as_natural_units(condition)
+    solution = get_scattering_state_scipy(converted_condition, config)
+
+    return State(
+        close_coupling_basis(condition.metadata).upcast(),
+        solution,
     )

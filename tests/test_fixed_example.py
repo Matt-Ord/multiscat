@@ -460,7 +460,7 @@ def test_scipy_upper_block_matches_fortran_debug() -> None:
         _wave_c,
     ) = _fortran_backend_inputs(condition)
 
-    _inverse_lower, upper = _build_scipy_operators(
+    _inverse_lower, _lower, upper = _build_scipy_operators(
         condition,
     )
     nkx, nky, nz = potential_values.shape
@@ -496,7 +496,7 @@ def test_scipy_lower_block_matches_fortran_debug() -> None:
         wave_c,
     ) = _fortran_backend_inputs(condition)
 
-    inverse_lower, _upper = _build_scipy_operators(
+    inverse_lower, _lower, _upper = _build_scipy_operators(
         condition,
     )
     rng = np.random.default_rng()
@@ -534,6 +534,34 @@ def test_raw_potential_in_input_file_convention() -> None:
 
     np.testing.assert_equal(expected.shape, from_condition.shape)
     np.testing.assert_allclose((from_condition), (expected), rtol=1e-5, atol=1e-10)
+
+
+def test_scipy_lower_block_and_inverse_are_inverses() -> None:
+    condition, _ = _simple_example_condition()
+    inverse_lower, lower, _upper = _build_scipy_operators(condition)
+
+    nkx, nky, nz = condition.metadata.shape
+    rng = np.random.default_rng(123)
+    state_in = (
+        rng.standard_normal((nkx, nky, nz)) + 1j * rng.standard_normal((nkx, nky, nz))
+    ).astype(np.complex128)
+    flat_state = state_in.ravel()
+
+    recovered_after_inverse_then_lower = lower.matvec(inverse_lower.matvec(flat_state))  # type: ignore[unknown]
+    recovered_after_lower_then_inverse = inverse_lower.matvec(lower.matvec(flat_state))  # type: ignore[unknown]
+
+    np.testing.assert_allclose(
+        recovered_after_inverse_then_lower,  # type: ignore[unknown]
+        flat_state,
+        rtol=1e-6,
+        atol=1e-7,
+    )
+    np.testing.assert_allclose(
+        recovered_after_lower_then_inverse,  # type: ignore[unknown]
+        flat_state,
+        rtol=1e-6,
+        atol=1e-7,
+    )
 
 
 def test_perpendicular_kinetic_difference_matches_fortran() -> None:
