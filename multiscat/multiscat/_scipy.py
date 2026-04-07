@@ -12,13 +12,13 @@ from slate_core.metadata import (
 )
 
 from multiscat.basis import (
+    close_coupling_basis,
     split_scattering_metadata,
 )
 from multiscat.multiscat._gmres import (
     run_gauss_seidel_gradient_decent,  # cspell: disable-line
 )
 from multiscat.multiscat._util import (
-    get_b_wave,
     get_outgoing_log_derivative_wave,
     get_parallel_kinetic_energy,
     get_perpendicular_kinetic_difference,
@@ -239,6 +239,69 @@ def _apply_inverse_lower_block(
     return solved
 
 
+def _apply_uncoupled_lower_block_operator(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: _ScipyOperatorData,
+    *,
+    channel_idx: int,
+) -> None:
+    """
+    Apply the uncoupled diagonal block operator (H_0 - E_i + C_i u_i v_i^T).
+
+    This is the inverse operation of
+    _apply_uncoupled_inverse_lower_block_operator.
+    """
+    # The rank-1 boundary update depends on the input state, not A @ state.
+    boundary_value = state_vector[channel_idx, -1]
+
+    # Apply A = (H_0 - E_i) in the H_0 eigenbasis.
+    transformed_state = np.einsum(
+        "lk,l->k",
+        operator_data.eigenvectors,
+        state_vector[channel_idx, :],
+    )
+    transformed_state *= (
+        operator_data.perpendicular_kinetic_difference[channel_idx]
+        + operator_data.eigenvalues
+    )
+    state_vector[channel_idx, :] = np.einsum(
+        "kl,l->k",
+        operator_data.eigenvectors,
+        transformed_state,
+    )
+
+    # Apply the rank-1 boundary update -C_i e_n e_n^T.
+    state_vector[channel_idx, -1] -= (
+        operator_data.outgoing_log_derivative_wave[channel_idx] * boundary_value
+    )
+
+
+def _apply_lower_block(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: _ScipyOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """
+    Apply the lower block diagonal operator to the state vector.
+
+    This is the inverse operation of _apply_inverse_lower_block.
+    """
+    out = state_vector.copy()
+
+    for channel in range(state_vector.shape[0]):
+        # Apply D_i
+        _apply_uncoupled_lower_block_operator(
+            out,
+            operator_data,
+            channel_idx=channel,
+        )
+
+        # Add V^lower_ij out_j
+        pairs = operator_data.potential_pairs[channel, :channel, :]
+        out[channel, :] += np.einsum("ik,ik->k", pairs, state_vector[:channel, :])
+
+    return out
+
+
 @dataclass(frozen=True)
 class _ScipyOperatorData:
     potential_pairs: np.ndarray[Any, np.dtype[np.complex128]]
@@ -257,7 +320,7 @@ def _build_scipy_operators[
     condition: ScatteringCondition[M0, M1, E],
     *,
     n_channels: int | None = None,
-) -> tuple[LinearOperator, LinearOperator]:
+) -> tuple[LinearOperator, LinearOperator, LinearOperator]:
     # This is where most of the bad code lives.
     # Operator Data is legacy (from before using a LinearOperator)
     # And this should be removed / simplified in the future.
@@ -340,6 +403,20 @@ def _build_scipy_operators[
         dtype=np.complex128,  # type: ignore[assignment]
     )
 
+    def _apply_lower(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        out = flat_state.reshape((nkx * nky, nz), copy=True)
+        lower = _apply_lower_block(out[channel_idx], operator_data)
+        out[channel_idx] = lower
+        return out.ravel()
+
+    lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
+        (state_size, state_size),
+        _apply_lower,
+        dtype=np.complex128,  # type: ignore[assignment]
+    )
+
     def _apply_upper(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
@@ -353,30 +430,7 @@ def _build_scipy_operators[
         _apply_upper,
         dtype=np.complex128,  # type: ignore[assignment]
     )
-    return inverse_lower, upper
-
-
-def _get_initial_state[
-    M0: EvenlySpacedLengthMetadata,
-    M1: LobattoSpacedLengthMetadata,
-    E: AxisDirections,
-](
-    condition: ScatteringCondition[M0, M1, E],
-) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
-    """
-    Get the initial state for the scattering problem.
-
-    For now, our guess at the solution is the state with only the incoming wave in
-    the specular channel.
-    """
-    _, metadata_z = split_scattering_metadata(condition.metadata)
-    initial_state = np.zeros(condition.metadata.shape, dtype=np.complex128)
-    specular_perpendicular_kinetic_difference = -(condition.incident_k[2] ** 2)
-    initial_state[0, 0, -1] = get_b_wave(
-        metadata_z,
-        specular_perpendicular_kinetic_difference,
-    )
-    return initial_state.ravel()
+    return inverse_lower, lower, upper
 
 
 def run_multiscat_scipy[
@@ -389,16 +443,46 @@ def run_multiscat_scipy[
 ) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
     # We split our hamiltonian into a lower block diagonal part L,
     # and an upper part U which contains the off-diagonal coupling between channels.
-    inverse_lower, upper = _build_scipy_operators(
+    inverse_lower, _lower, upper = _build_scipy_operators(
         condition,
         n_channels=config.n_channels,
     )
-    initial_state = _get_initial_state(condition)
+    initial_state = condition.initial_state.with_basis(
+        close_coupling_basis(condition.metadata),
+    ).raw_data.ravel()
 
     solution = run_gauss_seidel_gradient_decent(  # cspell: disable-line
         initial_state=initial_state,
         inverse_lower=inverse_lower,
         upper=upper,
+        config=config,
+    )
+
+    return solution.reshape(condition.metadata.shape)  # type: ignore[cant infer shape]
+
+
+def get_scattering_state_scipy[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+    config: OptimizationConfig,
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
+    """Run Multiscat through the scipy GMRES solver."""
+    inverse_lower, lower, upper = _build_scipy_operators(
+        condition,
+        n_channels=config.n_channels,
+    )
+    initial_state = condition.initial_state.with_basis(
+        close_coupling_basis(condition.metadata),
+    ).raw_data.ravel()
+
+    solution = run_gauss_seidel_gradient_decent(  # cspell: disable-line
+        initial_state=initial_state,
+        inverse_lower=inverse_lower,
+        upper=upper,
+        lower=lower,
         config=config,
     )
 
