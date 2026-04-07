@@ -95,7 +95,17 @@ def get_scattering_matrix[
     Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
     np.dtype[np.complex128],
 ]:
-    """Run Multiscat through the f2py native binding."""
+    """
+    Perform a scattering calculation and return the scattering matrix.
+
+    This provides the amplitude of the outgoing wave in each channel.
+
+    This uses the invers lower operator as a preconditioner. It splits
+    the operator into (D + L + U), and preconditions by (D+L^(-1)).
+
+    This is more accurate than the von-neumann approach (requires less interations),
+    but applying (D+L^(-1)) is less parrallelizable.
+    """
     converted_condition = _as_natural_units(condition)
 
     if backend == "fortran":
@@ -132,7 +142,22 @@ def get_scattering_matrix_von_neumann[
     Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
     np.dtype[np.complex128],
 ]:
-    """Run Multiscat with the scipy backend using a von Neumann preconditioner."""
+    """
+    Perform a scattering calculation and return the scattering matrix.
+
+    This provides the amplitude of the outgoing wave in each channel.
+
+    Unlike the standard scattering matrix calculation, this uses a von Neumann
+    approximation for the inverse.
+
+    It splits the operator into (D + V_scatter), where D is the uncoupled diagonal
+    block operator, and V_scatter is the inter-channel scattering potential
+    (excluding specular).
+
+    It uses the preconditioner
+    (D + V_scatter)^(-1) ~ sum_{k=0}^order (-D^(-1) V_scatter)^k D^(-1))
+    which may be more parallelizable than the standard (D+L)^(-1) approach.
+    """
     converted_condition = _as_natural_units(condition)
     solution = run_multiscat_scipy_von_neumann(
         converted_condition,
@@ -164,7 +189,7 @@ def get_scattering_state[
     Basis[ScatteringBasisMetadata[M0, M1, E]],
     np.dtype[np.complex128],
 ]:
-    """Run Multiscat through the f2py native binding."""
+    """Get the full scattering state, including the interior."""
     converted_condition = _as_natural_units(condition)
     solution = get_scattering_state_scipy(converted_condition, config)
 

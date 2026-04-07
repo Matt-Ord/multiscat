@@ -263,8 +263,7 @@ def _apply_diagonal_to_channel(
     """
     Apply the uncoupled diagonal block operator (H_0 - E_i + C_i u_i v_i^T).
 
-    This is the inverse operation of
-    _apply_uncoupled_inverse_lower_block_operator.
+    This is the inverse operation of _apply_inverse_diagonal_to_channel
     """
     # The rank-1 boundary update depends on the input state, not A @ state.
     boundary_value = state_vector[channel_idx, -1]
@@ -297,12 +296,18 @@ def apply_diagonal(
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """Apply the uncoupled diagonal block operator (H_0 - E_i + C_i u_i v_i^T)."""
     out = state_vector.copy()
-    for channel in range(out.shape[0]):
-        _apply_diagonal_to_channel(
-            out,
-            operator_data,
-            channel_idx=channel,
-        )
+
+    # Apply A = (H_0 - E_i) to all channels at once in the H_0 eigenbasis.
+    boundary_values = out[:, -1].copy()
+    transformed_state = np.einsum("cl,lk->ck", out, operator_data.eigenvectors)
+    transformed_state *= (
+        operator_data.perpendicular_kinetic_difference[:, np.newaxis]
+        + operator_data.eigenvalues[np.newaxis, :]
+    )
+    out = np.einsum("cl,kl->ck", transformed_state, operator_data.eigenvectors)
+
+    # Apply the rank-1 boundary update -C_i e_n e_n^T for each channel.
+    out[:, -1] -= operator_data.outgoing_log_derivative_wave * boundary_values
     return out
 
 
