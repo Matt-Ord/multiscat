@@ -102,7 +102,7 @@ def _apply_upper_block(
     return result
 
 
-def _apply_specular_operator(
+def _apply_inverse_specular_operator_to_channel(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: DiagonalOperatorData,
     *,
@@ -133,7 +133,7 @@ def _apply_specular_operator(
     )
 
 
-def _apply_boundary_corrections(
+def _apply_boundary_corrections_to_channel(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: DiagonalOperatorData,
     *,
@@ -196,10 +196,54 @@ def _apply_inverse_diagonal_to_channel(
     outgoing wave boundary correction at the final grid point.
     """
     # First, apply the inverse of the specular operator (H_0 - E_i)^(-1) psi
-    _apply_specular_operator(state_vector, operator_data, channel_idx=channel_idx)
+    _apply_inverse_specular_operator_to_channel(
+        state_vector,
+        operator_data,
+        channel_idx=channel_idx,
+    )
     # Use the Sherman-Morrison formula to apply a boundary correction
     # The resulting state is (H_0 - E_i + C_i u_i v_i^T)^(-1) psi
-    _apply_boundary_corrections(state_vector, operator_data, channel_idx=channel_idx)
+    _apply_boundary_corrections_to_channel(
+        state_vector,
+        operator_data,
+        channel_idx=channel_idx,
+    )
+
+
+def _apply_inverse_specular_operator(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: DiagonalOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """
+    Apply the inverse specular operator (H_0 - E_i)^(-1) to all channels.
+
+    This applies the uncoupled Green's function to the state vector
+    1 / (H_0 - E_i) for all channels at once.
+    """
+    transformed_state = np.einsum("cl,lk->ck", state_vector, operator_data.eigenvectors)
+    transformed_state /= (
+        operator_data.perpendicular_kinetic_difference[:, np.newaxis]
+        + operator_data.eigenvalues[np.newaxis, :]
+    )
+    return np.einsum("cl,kl->ck", transformed_state, operator_data.eigenvectors)
+
+
+def _add_boundary_corrections(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: DiagonalOperatorData,
+) -> None:
+    """
+    Enforce the outgoing wave boundary conditions on all channels.
+
+    This applies the outgoing-wave boundary correction C_i at the final
+    grid point (nz - 1) using the Sherman-Morrison rule for all channels at once.
+    """
+    denom = 1.0 - (
+        operator_data.lower_block_factors[-1, :]
+        * operator_data.outgoing_log_derivative_wave
+    )
+    fac = state_vector[:, -1] * operator_data.outgoing_log_derivative_wave / denom
+    state_vector += fac[:, np.newaxis] * operator_data.lower_block_factors.T
 
 
 def apply_inverse_diagonal(
@@ -207,13 +251,11 @@ def apply_inverse_diagonal(
     operator_data: DiagonalOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """Apply D^(-1), where D is the uncoupled diagonal-channel operator."""
-    out = state_vector.copy()
-    for channel in range(out.shape[0]):
-        _apply_inverse_diagonal_to_channel(
-            out,
-            operator_data,
-            channel_idx=channel,
-        )
+    # Apply (H_0 - E_i)^(-1) to all channels at once in the H_0 eigenbasis.
+    out = _apply_inverse_specular_operator(state_vector, operator_data)
+
+    # Apply the Sherman-Morrison boundary correction for each channel.
+    _add_boundary_corrections(out, operator_data)
     return out
 
 
