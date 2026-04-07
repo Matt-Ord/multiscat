@@ -18,7 +18,10 @@ from multiscat.basis import (
     close_coupling_basis,
     scattering_metadata_from_stacked_delta_x,
 )
-from multiscat.multiscat._multiscat import get_scattering_state
+from multiscat.multiscat._multiscat import (
+    get_scattering_matrix_von_neumann,
+    get_scattering_state,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -80,7 +83,7 @@ if __name__ == "__main__":
             np.array([0, UNIT_CELL, 0]),
             np.array([0, 0, Z_HEIGHT]),
         ),
-        (15, 15, 550),
+        (15, 15, 200),
     )
     condition = ScatteringCondition.from_angles(
         mass=HELIUM_MASS,
@@ -97,6 +100,12 @@ if __name__ == "__main__":
 
     fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs")
     ax.set_title("The scattering matrix")
+    fig.show()
+
+    s_matrix = get_scattering_matrix_von_neumann(condition, config, order=2)
+
+    fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs")
+    ax.set_title("The scattering matrix 2")
     fig.show()
 
     state = get_scattering_state(condition, config)

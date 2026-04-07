@@ -24,6 +24,7 @@ from multiscat.basis import (
 from multiscat.config import UnitSystem, with_units
 from multiscat.multiscat._fortran import run_multiscat_fortran
 from multiscat.multiscat._scipy import get_scattering_state_scipy, run_multiscat_scipy
+from multiscat.multiscat._scipy_von_neumann import run_multiscat_scipy_von_neumann
 from multiscat.multiscat._util import (
     get_ab_wave_for_condition,  # type: ignore[import-untyped]
 )
@@ -104,6 +105,40 @@ def get_scattering_matrix[
     else:
         msg = f"Unknown backend '{backend}'. Expected 'fortran' or 'scipy'."
         raise ValueError(msg)
+
+    channel_intensity = get_scattered_intensity(
+        solution,
+        converted_condition,
+    )
+
+    metadata_x01, _ = split_scattering_metadata(condition.metadata)
+    return Array(
+        AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
+        channel_intensity.astype(np.complex128),
+    )
+
+
+@timed
+def get_scattering_matrix_von_neumann[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+    config: OptimizationConfig,
+    *,
+    order: int = 1,
+) -> Array[
+    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
+    np.dtype[np.complex128],
+]:
+    """Run Multiscat with the scipy backend using a von Neumann preconditioner."""
+    converted_condition = _as_natural_units(condition)
+    solution = run_multiscat_scipy_von_neumann(
+        converted_condition,
+        config,
+        order=order,
+    )
 
     channel_intensity = get_scattered_intensity(
         solution,
