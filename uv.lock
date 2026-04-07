@@ -181,6 +181,13 @@ fortran = [
     { name = "multiscat-fortran" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "numpy" },
+    { name = "pytest" },
+    { name = "scipy" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.9.1,<4.0.0" },
@@ -195,6 +202,13 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
 provides-extras = ["fortran", "dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "numpy", specifier = ">=2.4.3" },
+    { name = "pytest", specifier = ">=8.4.2" },
+    { name = "scipy", specifier = ">=1.17.1" },
+]
 
 [[package]]
 name = "multiscat-fortran"
