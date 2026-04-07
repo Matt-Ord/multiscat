@@ -21,7 +21,7 @@ from multiscat.basis import (
     close_coupling_basis,
     split_scattering_metadata,
 )
-from multiscat.config import UnitSystem, with_units
+from multiscat.config import UnitSystem
 from multiscat.multiscat._fortran import run_multiscat_fortran
 from multiscat.multiscat._scipy import get_scattering_state_scipy, run_multiscat_scipy
 from multiscat.multiscat._scipy_von_neumann import run_multiscat_scipy_von_neumann
@@ -67,8 +67,7 @@ def _as_natural_units[
     LobattoSpacedLengthMetadata,
     AxisDirections,
 ]:
-    out = with_units(
-        condition,
+    out = condition.with_units(
         UnitSystem(
             angstrom=1.0,
             atomic_mass=0.5 * condition.units.atomic_mass / condition.mass,

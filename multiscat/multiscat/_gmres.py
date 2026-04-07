@@ -3,17 +3,20 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
+from slate_core.util import timed
 from tqdm import tqdm
 
 if TYPE_CHECKING:
     from multiscat.config import OptimizationConfig
 
 
-def run_gauss_seidel_gradient_decent(  # cspell: disable-line
-    initial_state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
+@timed
+def run_gauss_seidel_gradient_decent(  # cspell: disable-line  # noqa: PLR0913
+    target_state: np.ndarray[tuple[int], np.dtype[np.complexfloating]],
     inverse_lower: scipy.sparse.linalg.LinearOperator,
     upper: scipy.sparse.linalg.LinearOperator,
     lower: scipy.sparse.linalg.LinearOperator | None = None,
+    initial_state: np.ndarray[tuple[int], np.dtype[np.complexfloating]] | None = None,
     *,
     config: OptimizationConfig,
 ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
@@ -24,7 +27,7 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line
     (L + U) psi = b, but is more efficient to solve since the operator (I + L^{-1} U)
     is closer to the identity.
 
-    The input to this function is the initial guess at psi.
+    The input to this function is the target state vector b.
     The output of this function is L^{-1} psi, or simply psi if the
     lower operator is provided.
 
@@ -33,7 +36,7 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line
     (I - L^{-1} U) as a preconditioner to the GMRES solver. This should improve
     convergence if L^{-1} U is small.
     """
-    n_states = initial_state.size
+    n_states = target_state.size
 
     def _apply_linear_operator(
         state: np.ndarray[tuple[int], np.dtype[np.complex128]],
@@ -94,12 +97,15 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line
         resid_bar.n = next_progress
         resid_bar.refresh()
 
-    restart = min(config.max_iterations, initial_state.size)
+    restart = min(config.max_iterations, target_state.size)
     solution, gmres_info = cast(
         "tuple[np.ndarray[Any, np.dtype[np.complex128]], int]",
         scipy.sparse.linalg.gmres(  # type: ignore[unknown]
             A=linear_operator,
-            b=inverse_lower.matvec(initial_state),  # type: ignore[unknown]
+            b=inverse_lower.matvec(target_state),  # type: ignore[unknown]
+            x0=initial_state
+            if initial_state is None
+            else inverse_lower.matvec(initial_state),  # type: ignore[unknown]
             rtol=config.precision,
             restart=restart,
             maxiter=config.max_iterations,

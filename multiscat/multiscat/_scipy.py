@@ -22,6 +22,7 @@ from multiscat.multiscat._util import (
     get_outgoing_log_derivative_wave,
     get_parallel_kinetic_energy,
     get_perpendicular_kinetic_difference,
+    get_target_state,
     potential_as_array,  # type: ignore[import-untyped]
 )
 
@@ -507,11 +508,19 @@ def run_multiscat_scipy[
         condition,
         n_channels=config.n_channels,
     )
+    target_state = (
+        get_target_state(condition)
+        .with_basis(
+            close_coupling_basis(condition.metadata),
+        )
+        .raw_data.ravel()
+    )
     initial_state = condition.initial_state.with_basis(
         close_coupling_basis(condition.metadata),
     ).raw_data.ravel()
 
     solution = run_gauss_seidel_gradient_decent(  # cspell: disable-line
+        target_state=target_state,
         initial_state=initial_state,
         inverse_lower=inverse_lower,
         upper=upper,
@@ -534,16 +543,24 @@ def get_scattering_state_scipy[
         condition,
         n_channels=config.n_channels,
     )
+    target_state = (
+        get_target_state(condition)
+        .with_basis(
+            close_coupling_basis(condition.metadata),
+        )
+        .raw_data.ravel()
+    )
     initial_state = condition.initial_state.with_basis(
         close_coupling_basis(condition.metadata),
     ).raw_data.ravel()
 
     solution = run_gauss_seidel_gradient_decent(  # cspell: disable-line
+        target_state=target_state,
         initial_state=initial_state,
         inverse_lower=inverse_lower,
         upper=upper,
-        lower=lower,
         config=config,
+        lower=lower,
     )
 
     return solution.reshape(condition.metadata.shape)  # type: ignore[cant infer shape]

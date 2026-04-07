@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
 
+
 HELIUM_MASS = physical_constants["alpha particle mass"][0]
 HELIUM_ENERGY = 20 * electron_volt * 10**-3
 

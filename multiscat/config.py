@@ -19,7 +19,6 @@ from slate_core.metadata import (
     AxisDirections,
     EvenlySpacedLengthMetadata,
     LobattoSpacedLengthMetadata,
-    LobattoSpacedMetadata,
 )
 from slate_core.metadata.volume import fundamental_stacked_delta_x
 from slate_quantum import Operator, State, operator
@@ -28,7 +27,6 @@ from slate_quantum.operator import position_operator_basis
 from multiscat.basis import (
     close_coupling_basis,
     scattering_metadata_from_stacked_delta_x,
-    split_scattering_metadata,
 )
 
 if TYPE_CHECKING:
@@ -78,19 +76,6 @@ class UnitSystem:
 SI_UNITS = UnitSystem.si()
 
 
-def get_b_wave(
-    metadata: LobattoSpacedMetadata,
-    energy: float,
-) -> complex:
-    """Get the inverse of outgoing wave amplitude, for a channel with a given energy."""
-    open_channel = energy < 0.0
-    if not open_channel:
-        return 0
-    dk = np.sqrt(np.abs(energy))
-    theta = dk * (metadata.delta - metadata.domain.start)
-    return np.sqrt(dk) * np.exp(-1j * theta) * metadata.basis_weights[-1]
-
-
 class ScatteringCondition[
     M0: EvenlySpacedLengthMetadata = EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata = LobattoSpacedLengthMetadata,
@@ -119,16 +104,9 @@ class ScatteringCondition[
     @property
     def initial_state(self) -> State[Basis[ScatteringBasisMetadata[M0, M1, E]]]:
         """The initial state of the scattering problem."""
-        _, metadata_z = split_scattering_metadata(self.metadata)
-        initial_state = np.zeros(self.metadata.shape, dtype=np.complex128)
-        specular_perpendicular_kinetic_difference = -(self.incident_k[2] ** 2)
-        initial_state[0, 0, -1] = get_b_wave(
-            metadata_z,
-            specular_perpendicular_kinetic_difference,
-        )
         return State(
             close_coupling_basis(self.metadata).upcast(),
-            initial_state.ravel(),
+            np.zeros(self.metadata.shape, dtype=np.complex128).ravel(),
         )
 
     @property
@@ -206,6 +184,10 @@ class ScatteringCondition[
         kx, ky, _ = self.incident_k
         return np.arctan2(ky, kx)
 
+    def with_units(self, units: UnitSystem) -> ScatteringCondition:
+        """Convert this scattering condition to a different unit system."""
+        return _with_units(self, units)
+
 
 def momentum_from_angles(
     theta: float,
@@ -270,7 +252,7 @@ def _potential_with_units[
     )
 
 
-def with_units[
+def _with_units[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
