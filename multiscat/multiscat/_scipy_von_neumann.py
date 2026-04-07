@@ -28,7 +28,11 @@ def _apply_scattering_v(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     potential_pairs: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
-    """Apply full inter-channel scattering potential V = V^lower + V^upper."""
+    """
+    Apply full inter-channel scattering potential V_scatter.
+
+    This is the full potential V, excluding the specular term.
+    """
     return np.einsum("aik,ik->ak", potential_pairs, state_vector)
 
 
@@ -38,12 +42,12 @@ def _apply_inverse_von_neumann(
     *,
     order: int,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
-    """Approximate (D + V^lower)^(-1) by a truncated von Neumann series."""
+    """Approximate (D + V_scatter)^(-1) by a truncated von Neumann series."""
     term = apply_inverse_diagonal(state_vector, operator_data)
     out = term.copy()
 
     for _ in range(order):
-        # term_{k+1} = -D^{-1} V term_k
+        # term_{k+1} = -D^{-1} V_scatter term_k
         term = -apply_inverse_diagonal(
             _apply_scattering_v(term, operator_data.potential_pairs),
             operator_data,
@@ -76,6 +80,7 @@ def _build_scipy_von_neumann_operators[
     def _matvec_a(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        """Apply the full operator A = D + V_scatter."""
         reshaped = flat_state.reshape((-1, nz))
         out = reshaped.copy()
 
@@ -84,7 +89,7 @@ def _build_scipy_von_neumann_operators[
             operator_data,
         )
         scatter_out = _apply_scattering_v(
-            reshaped[channel_idx].copy(),
+            reshaped[channel_idx],
             operator_data.potential_pairs,
         )
         out[channel_idx] = diagonal_out + scatter_out
@@ -99,6 +104,7 @@ def _build_scipy_von_neumann_operators[
     def _matvec_preconditioner(
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        """Apply the von Neumann preconditioner."""
         reshaped = flat_state.reshape((-1, nz))
         out = reshaped.copy()
         out[channel_idx] = _apply_inverse_von_neumann(
