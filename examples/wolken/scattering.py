@@ -18,7 +18,7 @@ from multiscat.basis import (
     close_coupling_basis,
     scattering_metadata_from_stacked_delta_x,
 )
-from multiscat.multiscat._multiscat import (
+from multiscat.multiscat import (
     get_scattering_matrix_von_neumann,
     get_scattering_state,
 )

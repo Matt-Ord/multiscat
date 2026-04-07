@@ -32,12 +32,12 @@ from multiscat.basis import (
     split_scattering_metadata,
 )
 from multiscat.config import OptimizationConfig, ScatteringCondition
-from multiscat.multiscat._fortran import (
-    _condition_parameters,
-)
-from multiscat.multiscat._multiscat import (
+from multiscat.multiscat import (
     get_scattering_matrix,
     get_scattering_matrix_von_neumann,
+)
+from multiscat.multiscat._fortran import (
+    _condition_parameters,
 )
 from multiscat.multiscat._scipy import (
     _build_lower_block_factors,
