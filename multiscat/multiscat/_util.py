@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
+from slate_quantum import State
 
 if TYPE_CHECKING:
     from multiscat.config import (  # type: ignore[import-untyped]
@@ -10,6 +11,7 @@ if TYPE_CHECKING:
 
 
 from slate_core import (
+    Basis,
     TupleMetadata,
     array,
 )
@@ -22,6 +24,7 @@ from slate_core.metadata import (
 from slate_core.metadata.volume import fundamental_stacked_k_points
 
 from multiscat.basis import (
+    ScatteringBasisMetadata,
     close_coupling_basis,
     split_scattering_metadata,
 )
@@ -158,3 +161,37 @@ def potential_as_array(
 
     data = potential_diagonal.with_basis(basis).raw_data.reshape((nx, ny, nz))
     return data * basis_weights[np.newaxis, np.newaxis, :] / np.sqrt(nx * ny)
+
+
+def get_b_wave(
+    metadata: LobattoSpacedMetadata,
+    energy: float,
+) -> complex:
+    """Get the inverse of outgoing wave amplitude, for a channel with a given energy."""
+    open_channel = energy < 0.0
+    if not open_channel:
+        return 0
+    dk = np.sqrt(np.abs(energy))
+    theta = dk * (metadata.delta - metadata.domain.start)
+    return np.sqrt(dk) * np.exp(-1j * theta) * metadata.basis_weights[-1]
+
+
+def get_target_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+) -> State[Basis[ScatteringBasisMetadata[M0, M1, E]]]:
+    """Get the target state of the scattering problem."""
+    _, metadata_z = split_scattering_metadata(condition.metadata)
+    initial_state = np.zeros(condition.metadata.shape, dtype=np.complex128)
+    specular_perpendicular_kinetic_difference = -(condition.incident_k[2] ** 2)
+    initial_state[0, 0, -1] = get_b_wave(
+        metadata_z,
+        specular_perpendicular_kinetic_difference,
+    )
+    return State(
+        close_coupling_basis(condition.metadata).upcast(),
+        initial_state.ravel(),
+    )

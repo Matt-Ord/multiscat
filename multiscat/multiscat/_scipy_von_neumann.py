@@ -17,6 +17,7 @@ from multiscat.multiscat._scipy import (
     apply_inverse_diagonal,
     build_scipy_operator_data,
 )
+from multiscat.multiscat._util import get_target_state
 
 if TYPE_CHECKING:
     from scipy.sparse.linalg import LinearOperator  # type: ignore[untyped]
@@ -150,6 +151,13 @@ def run_multiscat_scipy_von_neumann[
         order=order,
         n_channels=config.n_channels,
     )
+    target_state = (
+        get_target_state(condition)
+        .with_basis(
+            close_coupling_basis(condition.metadata),
+        )
+        .raw_data.ravel()
+    )
     initial_state = condition.initial_state.with_basis(
         close_coupling_basis(condition.metadata),
     ).raw_data.ravel()
@@ -157,7 +165,8 @@ def run_multiscat_scipy_von_neumann[
     restart = min(config.max_iterations, initial_state.size)
     solution, gmres_info = scipy.sparse.linalg.gmres(  # type: ignore[unknown]
         A=operator_a,
-        b=initial_state,
+        b=target_state,
+        x0=initial_state,
         rtol=config.precision,
         restart=restart,
         maxiter=config.max_iterations,
