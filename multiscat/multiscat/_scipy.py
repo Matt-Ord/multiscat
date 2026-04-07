@@ -63,11 +63,11 @@ def _build_lower_block_factors(
     eigenvalues: np.ndarray[tuple[int], np.dtype[np.float64]],
     eigenvectors: np.ndarray[Any, np.dtype[np.float64]],
 ) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
-    """Calculate (H_0 + E_i C_i u_i)^(-1)."""
+    """Calculate (H_0 + E_alpha)^(-1) C_i u_i."""
     channel_count = channel_energy.shape[0]
     nz = eigenvectors.shape[-1]
 
-    # calculate (H_0 - E_alpha)^(-1) C_i u_i
+    # calculate (H_0 + E_alpha)^(-1) C_i u_i
     g = np.empty((nz, channel_count), dtype=np.float64)
     lower_block_factors = np.zeros((nz, channel_count), dtype=np.float64)
     for j in range(channel_count):
@@ -79,7 +79,7 @@ def _build_lower_block_factors(
 
 def _apply_upper_block(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    operator_data: _ScipyOperatorData,
+    operator_data: ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """
     Apply the off-diagonal channel-coupling potential V_1(z)Q(x,y).
@@ -103,7 +103,7 @@ def _apply_upper_block(
 
 def _apply_specular_operator(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    operator_data: _ScipyOperatorData,
+    operator_data: DiagonalOperatorData,
     *,
     channel_idx: int,
 ) -> None:
@@ -134,7 +134,7 @@ def _apply_specular_operator(
 
 def _apply_boundary_corrections(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    operator_data: _ScipyOperatorData,
+    operator_data: DiagonalOperatorData,
     *,
     channel_idx: int,
 ) -> None:
@@ -181,9 +181,9 @@ def _apply_boundary_corrections(
     )
 
 
-def _apply_uncoupled_inverse_lower_block_operator(
+def _apply_inverse_diagonal_to_channel(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    operator_data: _ScipyOperatorData,
+    operator_data: DiagonalOperatorData,
     *,
     channel_idx: int,
 ) -> None:
@@ -201,9 +201,24 @@ def _apply_uncoupled_inverse_lower_block_operator(
     _apply_boundary_corrections(state_vector, operator_data, channel_idx=channel_idx)
 
 
+def apply_inverse_diagonal(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: DiagonalOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """Apply D^(-1), where D is the uncoupled diagonal-channel operator."""
+    out = state_vector.copy()
+    for channel in range(out.shape[0]):
+        _apply_inverse_diagonal_to_channel(
+            out,
+            operator_data,
+            channel_idx=channel,
+        )
+    return out
+
+
 def _apply_inverse_lower_block(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    operator_data: _ScipyOperatorData,
+    operator_data: ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """
     Apply the inverse of the lower block diagonal operator to the state vector.
@@ -230,7 +245,7 @@ def _apply_inverse_lower_block(
         solved[channel, :] -= np.einsum("ik,ik->k", pairs, solved[:channel, :])
 
         # Apply D^(-1)_i
-        _apply_uncoupled_inverse_lower_block_operator(
+        _apply_inverse_diagonal_to_channel(
             solved,
             operator_data,
             channel_idx=channel,
@@ -239,9 +254,9 @@ def _apply_inverse_lower_block(
     return solved
 
 
-def _apply_uncoupled_lower_block_operator(
+def _apply_diagonal_to_channel(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    operator_data: _ScipyOperatorData,
+    operator_data: DiagonalOperatorData,
     *,
     channel_idx: int,
 ) -> None:
@@ -276,9 +291,24 @@ def _apply_uncoupled_lower_block_operator(
     )
 
 
+def apply_diagonal(
+    state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: DiagonalOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """Apply the uncoupled diagonal block operator (H_0 - E_i + C_i u_i v_i^T)."""
+    out = state_vector.copy()
+    for channel in range(out.shape[0]):
+        _apply_diagonal_to_channel(
+            out,
+            operator_data,
+            channel_idx=channel,
+        )
+    return out
+
+
 def _apply_lower_block(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
-    operator_data: _ScipyOperatorData,
+    operator_data: ScipyOperatorData,
 ) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
     """
     Apply the lower block diagonal operator to the state vector.
@@ -289,7 +319,7 @@ def _apply_lower_block(
 
     for channel in range(state_vector.shape[0]):
         # Apply D_i
-        _apply_uncoupled_lower_block_operator(
+        _apply_diagonal_to_channel(
             out,
             operator_data,
             channel_idx=channel,
@@ -303,16 +333,22 @@ def _apply_lower_block(
 
 
 @dataclass(frozen=True)
-class _ScipyOperatorData:
-    potential_pairs: np.ndarray[Any, np.dtype[np.complex128]]
+class DiagonalOperatorData:
     eigenvalues: np.ndarray[Any, np.dtype[np.float64]]
     eigenvectors: np.ndarray[Any, np.dtype[np.float64]]
     perpendicular_kinetic_difference: np.ndarray[Any, np.dtype[np.float64]]
-    lower_block_factors: np.ndarray[Any, np.dtype[np.float64]]
     outgoing_log_derivative_wave: np.ndarray[Any, np.dtype[np.complex128]]
+    lower_block_factors: np.ndarray[Any, np.dtype[np.float64]]
 
 
-def _build_scipy_operators[
+@dataclass(frozen=True)
+class ScipyOperatorData(DiagonalOperatorData):
+    potential_pairs: np.ndarray[Any, np.dtype[np.complex128]]
+    channel_idx: np.ndarray[tuple[int], np.dtype[np.int64]]
+    shape: tuple[int, int, int]
+
+
+def build_scipy_operator_data[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
@@ -320,15 +356,7 @@ def _build_scipy_operators[
     condition: ScatteringCondition[M0, M1, E],
     *,
     n_channels: int | None = None,
-) -> tuple[LinearOperator, LinearOperator, LinearOperator]:
-    # This is where most of the bad code lives.
-    # Operator Data is legacy (from before using a LinearOperator)
-    # And this should be removed / simplified in the future.
-    # Ideally, we should clean this up, and add channel
-    # filtering (ie discarding channels with very high kinetic energy,
-    # maybe specify n_channels)
-    # We should also build lower block factors when we define inverse_lower
-
+) -> ScipyOperatorData:
     metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
     perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
         condition.incident_k,
@@ -353,7 +381,7 @@ def _build_scipy_operators[
     # We will treat the specular potential separately in the preconditioner
     potential_values[0, 0] = 0.0
 
-    nkx, nky, nz = potential_values.shape
+    nkx, nky, _nz = potential_values.shape
     # The (ikx, iky) of each channel
     cx, cy = np.unravel_index(channel_idx, (nkx, nky))
     # Pairwise differences of channel indices
@@ -378,15 +406,42 @@ def _build_scipy_operators[
         perpendicular_kinetic_difference,
     )
 
-    operator_data = _ScipyOperatorData(
+    return ScipyOperatorData(
         potential_pairs=potential_pairs,
         eigenvalues=eigenvalues,
         eigenvectors=eigenvectors,
         perpendicular_kinetic_difference=perpendicular_kinetic_difference,
         lower_block_factors=lower_block_factors,
         outgoing_log_derivative_wave=outgoing_log_derivative_wave,
+        channel_idx=channel_idx,
+        shape=condition.metadata.shape,  # type: ignore[shape]
     )
 
+
+def _build_scipy_operators[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+    *,
+    n_channels: int | None = None,
+) -> tuple[LinearOperator, LinearOperator, LinearOperator]:
+    # This is where most of the bad code lives.
+    # Operator Data is legacy (from before using a LinearOperator)
+    # And this should be removed / simplified in the future.
+    # Ideally, we should clean this up, and add channel
+    # filtering (ie discarding channels with very high kinetic energy,
+    # maybe specify n_channels)
+    # We should also build lower block factors when we define inverse_lower
+
+    operator_data = build_scipy_operator_data(
+        condition,
+        n_channels=n_channels,
+    )
+
+    nkx, nky, nz = operator_data.shape
+    channel_idx = operator_data.channel_idx
     state_size = np.prod((nkx, nky, nz))
 
     def _apply_inverse_lower(

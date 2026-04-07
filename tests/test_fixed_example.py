@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pytest
 from multiscat_fortran import (
     debug_apply_upper_block_fortran,
     debug_build_preconditioner_fortran,
@@ -36,6 +37,7 @@ from multiscat.multiscat._fortran import (
 )
 from multiscat.multiscat._multiscat import (
     get_scattering_matrix,
+    get_scattering_matrix_von_neumann,
 )
 from multiscat.multiscat._scipy import (
     _build_lower_block_factors,
@@ -341,6 +343,36 @@ def test_simple_system_scipy_backend() -> None:
         (nx, ny),
     )
     np.testing.assert_allclose(intensities, expected, rtol=0.0, atol=1e-5)
+
+
+@pytest.mark.parametrize("order", [0, 1, 2])
+def test_simple_system_scipy_von_neumann_matches_scipy(order: int) -> None:
+    condition, config = _simple_example_condition()
+    reference = get_scattering_matrix(condition, config, backend="scipy")
+    reference_intensities = np.real_if_close(
+        reference.with_basis(
+            basis.transformed_from_metadata(reference.basis.metadata()),
+        ).raw_data.reshape(condition.metadata.shape[:2]),
+    )
+
+    s_matrix = get_scattering_matrix_von_neumann(condition, config, order=order)
+    intensities = np.real_if_close(
+        s_matrix.with_basis(
+            basis.transformed_from_metadata(s_matrix.basis.metadata()),
+        ).raw_data.reshape(condition.metadata.shape[:2]),
+    )
+    np.testing.assert_allclose(
+        intensities,
+        reference_intensities,
+        rtol=0.0,
+        atol=1e-5,
+    )
+
+
+def test_scipy_von_neumann_invalid_order_raises() -> None:
+    condition, config = _simple_example_condition()
+    with np.testing.assert_raises(ValueError):
+        get_scattering_matrix_von_neumann(condition, config, order=-1)
 
 
 def test_scipy_preconditioner_matches_fortran_debug() -> None:
