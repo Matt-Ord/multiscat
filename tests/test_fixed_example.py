@@ -27,6 +27,7 @@ from slate_core.metadata import LobattoSpacedLengthMetadata
 from slate_quantum import operator
 
 from multiscat.basis import (
+    as_scattering_potential,
     close_coupling_basis,
     scattering_metadata_from_stacked_delta_x,
     split_scattering_metadata,
@@ -149,15 +150,19 @@ def _simple_example_condition() -> tuple[
     # This is taken from https://doi.org/10.1039/FT9908601641
     # and is a reproduction of the Wolken 4He-LiF problem in table 1,
     # originally simulated in https://doi.org/10.1063/1.1679617.
+    potential = as_scattering_potential(
+        operator.build.corrugated_morse_potential(
+            metadata,
+            MORSE_PARAMETERS,
+        ),
+        metadata,
+    )
     condition = ScatteringCondition.from_angles(
         mass=HELIUM_MASS,
         energy=20 * electron_volt * 10**-3,
         theta=np.deg2rad(30),
         phi=np.deg2rad(0),
-        potential=operator.build.corrugated_morse_potential(
-            metadata,
-            MORSE_PARAMETERS,
-        ),
+        potential=potential,
     )
     config = OptimizationConfig(precision=1e-5, max_iterations=1000)
     return condition, config
@@ -285,9 +290,12 @@ def _rotated_example_condition() -> tuple[
         energy=20 * electron_volt * 10**-3,
         theta=np.deg2rad(30),
         phi=0,
-        potential=operator.build.corrugated_morse_potential(
+        potential=as_scattering_potential(
+            operator.build.corrugated_morse_potential(
+                metadata,
+                MORSE_PARAMETERS,
+            ),
             metadata,
-            MORSE_PARAMETERS,
         ),
     )
     config = OptimizationConfig(precision=1e-5, max_iterations=1000)

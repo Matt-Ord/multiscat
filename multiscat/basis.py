@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, Never
 
 import numpy as np
 from slate_core import (
+    BasisMetadata,
+    Ctype,
     FundamentalBasis,
     SimpleMetadata,
     TransformedBasis,
@@ -19,6 +21,10 @@ from slate_core.metadata import (
     LobattoSpacedLengthMetadata,
 )
 from slate_core.metadata.volume import project_directions_onto_axes
+
+if TYPE_CHECKING:
+    from slate_quantum import Operator
+    from slate_quantum.operator import OperatorBasis, Potential
 
 type ScatteringBasisMetadata[
     M0: SimpleMetadata = EvenlySpacedLengthMetadata,
@@ -111,3 +117,23 @@ def close_coupling_basis[
         ),
         metadata.extra,
     )
+
+
+def as_scattering_potential[
+    M: BasisMetadata,
+    CT: Ctype[Never],
+    DT: np.dtype[np.generic],
+](
+    potential: Potential[Any, Any, CT, DT],
+    metadata: M,
+) -> Operator[OperatorBasis[M, CT], DT]:
+    """
+    Convert a potential to one that can be used in scattering calculations.
+
+    This simply checks that the potential's basis has the correct metadata.
+
+    This is a work-around for the limitation of pythons type system,
+    since it is not possible to express that the potential's basis must have metadata M.
+    """
+    assert potential.basis.metadata().children[1] == metadata  # noqa: S101
+    return potential  # type: ignore[return-value]
