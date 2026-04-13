@@ -25,6 +25,7 @@ from slate_quantum import Operator, State, operator
 from slate_quantum.operator import position_operator_basis
 
 from multiscat.basis import (
+    as_scattering_potential,
     close_coupling_basis,
     scattering_metadata_from_stacked_delta_x,
 )
@@ -331,9 +332,12 @@ class MorseScatteringCondition[
     @cached_property
     def _potential(self) -> ScatteringOperator[M0, M1, E]:  # type: ignore override private
         """The scattering operator."""
-        return operator.build.corrugated_morse_potential(
+        return as_scattering_potential(
+            operator.build.corrugated_morse_potential(
+                self.metadata,
+                self.morse_parameters,
+            ),
             self.metadata,
-            self.morse_parameters,
         )
 
     @property

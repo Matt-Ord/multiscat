@@ -13,6 +13,7 @@ from slate_quantum import State, operator
 from multiscat import OptimizationConfig, ScatteringCondition, get_scattering_matrix
 from multiscat.basis import (
     ScatteringBasisMetadata,
+    as_scattering_potential,
     scattering_metadata_from_stacked_delta_x,
 )
 from multiscat.multiscat import (
@@ -80,15 +81,16 @@ if __name__ == "__main__":
         ),
         (15, 15, 200),
     )
+    potential = as_scattering_potential(
+        operator.build.corrugated_morse_potential(metadata, MORSE_PARAMETERS),
+        metadata,
+    )
     condition = ScatteringCondition.from_angles(
         mass=HELIUM_MASS,
         energy=HELIUM_ENERGY,
         theta=np.deg2rad(30),
         phi=np.deg2rad(0),
-        potential=operator.build.corrugated_morse_potential(
-            metadata,
-            MORSE_PARAMETERS,
-        ),
+        potential=potential,
     )
     config = OptimizationConfig(precision=1e-5, max_iterations=1000, n_channels=80)
     s_matrix = get_scattering_matrix(CheatCondition(condition), config, backend="scipy")
