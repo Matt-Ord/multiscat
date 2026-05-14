@@ -7,6 +7,7 @@ from slate_core import (
     BasisMetadata,
     Ctype,
     FundamentalBasis,
+    LengthMetadata,
     SimpleMetadata,
     TransformedBasis,
     TupleBasis,
@@ -80,6 +81,25 @@ def split_scattering_metadata[
             project_directions_onto_axes(metadata.extra, (0, 1)),
         ),
         metadata.children[2],
+    )
+
+
+def combine_scattering_metadata[
+    M0: LengthMetadata,
+    M1: LengthMetadata,
+](
+    metadata_xy: TupleMetadata[tuple[M0, ...], AxisDirections],
+    metadata_z: M1,
+) -> ScatteringBasisMetadata[M0, M1, AxisDirections]:
+    """Combine the scattering basis metadata into parallel and perpendicular parts."""
+    vector_x = np.zeros(3)
+    vector_x[:2] = metadata_xy.extra.vectors[0]
+    vector_y = np.zeros(3)
+    vector_y[:2] = metadata_xy.extra.vectors[1]
+
+    return TupleMetadata(
+        (metadata_xy.children[0], metadata_xy.children[1], metadata_z),
+        AxisDirections(vectors=(vector_x, vector_y, np.array([0, 0, 1]))),
     )
 
 
