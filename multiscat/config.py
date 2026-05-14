@@ -12,6 +12,9 @@ from scipy.constants import (  # type: ignore[import-untyped]
     atomic_mass as atomic_mass_si,
 )
 from scipy.constants import (  # type: ignore[import-untyped]
+    electron_volt as electron_volt_si,
+)
+from scipy.constants import (  # type: ignore[import-untyped]
     hbar as hbar_si,
 )
 from slate_core import AsUpcast, Basis, TupleMetadata
@@ -72,6 +75,13 @@ class UnitSystem:
     def kinetic_energy_unit(self) -> float:
         """The unit of kinetic energy in this system."""
         return (self.hbar**2) / (2 * self.atomic_mass * self.angstrom**2)
+
+    @property
+    def electron_volt(self) -> float:
+        """The value of one electron volt in this system."""
+        return electron_volt_si * (
+            UnitSystem().kinetic_energy_unit / self.kinetic_energy_unit
+        )
 
 
 SI_UNITS = UnitSystem.si()
