@@ -122,6 +122,7 @@ def _mos2_potential(
 def get_mos2_metadata[MZ: LengthMetadata](
     shape: tuple[int, int],
     metadata_z: MZ,
+    repeats: tuple[int, int] = (1,1),
     *,
     units: UnitSystem | None = None,
 ) -> ScatteringBasisMetadata[EvenlySpacedLengthMetadata, MZ, AxisDirections]:
@@ -130,6 +131,9 @@ def get_mos2_metadata[MZ: LengthMetadata](
     a1 = np.array([-lattice_constant, 0])
     a2 = np.array([lattice_constant / 2, lattice_constant * np.sqrt(3) / 2])
 
+    a1 *= repeats[0]
+    a2 *= repeats[1]
+
     metadata_xy = _metadata.spaced_volume_metadata_from_stacked_delta_x((a1, a2), shape)
     return combine_scattering_metadata(metadata_xy, metadata_z)
 
@@ -137,6 +141,7 @@ def get_mos2_metadata[MZ: LengthMetadata](
 def build_mos2_potential[MZ: LengthMetadata](
     shape: tuple[int, int],
     metadata_z: MZ,
+    repeats: tuple[int, int] = (1,1),
     *,
     units: UnitSystem | None = None,
 ) -> Operator[
@@ -146,7 +151,7 @@ def build_mos2_potential[MZ: LengthMetadata](
     np.dtype[np.complexfloating],
 ]:
     units = units or UnitSystem()
-    metadata = get_mos2_metadata(shape, metadata_z, units=units)
+    metadata = get_mos2_metadata(shape, metadata_z, repeats=repeats, units=units)
 
     return as_scattering_potential(
         operator.build.potential_from_function(
