@@ -415,14 +415,19 @@ def build_scipy_operator_data[
     if n_channels is not None:
         channel_idx = channel_idx[:n_channels]
 
-    perpendicular_kinetic_difference = perpendicular_kinetic_difference[channel_idx]
-    if perpendicular_kinetic_difference[-1] < condition.incident_energy:
+    if perpendicular_kinetic_difference[channel_idx[-1]] < condition.incident_energy:
+        first_non_propagating = 1 + np.searchsorted(
+            np.sort(perpendicular_kinetic_difference),
+            condition.incident_energy,
+        )
         warnings.warn(
             "The highest kinetic energy channel is below the incident energy. "
-            "This may lead to poor convergence. Consider increasing n_channels.",
+            f"This may lead to poor convergence."
+            f"Consider increasing n_channels to {first_non_propagating}.",
             UserWarning,
             stacklevel=5,
         )
+    perpendicular_kinetic_difference = perpendicular_kinetic_difference[channel_idx]
 
     potential_values = potential_as_array(condition.potential)
     specular_potential = potential_values[0, 0].copy()
