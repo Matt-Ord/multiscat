@@ -13,7 +13,7 @@ from slate_core.metadata import (
 from multiscat import OptimizationConfig, ScatteringCondition, get_scattering_matrix
 
 HELIUM_MASS = physical_constants["alpha particle mass"][0]
-HELIUM_ENERGY = 20 * electron_volt * 10**-3
+HELIUM_ENERGY = 63 * electron_volt * 10**-3
 
 
 if __name__ == "__main__":
@@ -27,14 +27,14 @@ if __name__ == "__main__":
     condition = ScatteringCondition.from_angles(
         mass=HELIUM_MASS,
         energy=HELIUM_ENERGY,
-        theta=np.deg2rad(30),
+        theta=np.deg2rad(45),
         phi=np.deg2rad(0),
         potential=potential,
     )
     config = OptimizationConfig(
         precision=1e-5,
         max_iterations=50,
-        n_channels=70 * np.prod(repeats).item(),
+        n_channels=130 * np.prod(repeats).item(),
     )
     s_matrix = get_scattering_matrix(condition, config, backend="scipy")
 
