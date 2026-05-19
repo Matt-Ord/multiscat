@@ -38,7 +38,10 @@ if __name__ == "__main__":
     )
     s_matrix = get_scattering_matrix(condition, config, backend="scipy")
 
-    fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs")
+    fig, ax, _mesh = plot.array_against_axes_2d_k_nearest_neighbor(
+        s_matrix,
+        measure="abs",
+    )
     ax.set_title("The scattering matrix")
     fig.show()
 
