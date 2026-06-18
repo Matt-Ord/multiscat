@@ -73,13 +73,13 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line  # noqa: PLR0913
     linear_operator = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (n_states, n_states),
         _apply_linear_operator,
-        dtype=np.complex128,  # type: ignore[type-arg],
+        dtype=np.complex128,  # type: ignore[type-arg],  # ty:ignore[parameter-already-assigned]
     )
     preconditioner = (
         scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
             (n_states, n_states),
             _apply_neumann_preconditioner,
-            dtype=np.complex128,  # type: ignore[type-arg],
+            dtype=np.complex128,  # type: ignore[type-arg],  # ty:ignore[parameter-already-assigned]
         )
         if config.use_neumann_preconditioner
         else None
@@ -89,7 +89,7 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line  # noqa: PLR0913
 
     def _callback(pr_norm: float) -> None:
         error = max(0, round(np.log10(pr_norm / config.precision), 3))
-        next_progress = round(resid_bar.total - error, 3)
+        next_progress = round(float(resid_bar.total) - error, 3)  # ty:ignore[invalid-argument-type]
         if next_progress < 0:
             resid_bar.reset(total=error)
             next_progress = 0

@@ -8,8 +8,13 @@ import sysconfig
 from pathlib import Path
 from typing import override
 
-from setuptools import Extension, setup  # type: ignore[resolve]
-from setuptools.command.build_ext import build_ext  # type: ignore[resolve]
+from setuptools import (  # type: ignore[resolve]# ty:ignore[unresolved-import]
+    Extension,
+    setup,
+)
+from setuptools.command.build_ext import (  # ty:ignore[unresolved-import]
+    build_ext,  # type: ignore[resolve]
+)
 
 
 class F2PyBuildExt(build_ext):  # noqa: D101

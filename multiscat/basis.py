@@ -156,4 +156,4 @@ def as_scattering_potential[
     since it is not possible to express that the potential's basis must have metadata M.
     """
     assert potential.basis.metadata().children[1] == metadata  # noqa: S101
-    return potential  # type: ignore[return-value]
+    return potential  # type: ignore[return-value]  # ty:ignore[invalid-return-type]

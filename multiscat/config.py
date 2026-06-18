@@ -227,7 +227,7 @@ def _metadata_with_units(
     length_factor = units.angstrom / old_units.angstrom
     return scattering_metadata_from_stacked_delta_x(
         vectors=tuple(v * length_factor for v in vectors),
-        shape=metadata.shape,  # type: ignore[length not inferred]
+        shape=metadata.shape,  # ty:ignore[invalid-argument-type]
     )
 
 
@@ -340,7 +340,7 @@ class MorseScatteringCondition[
         return self._metadata
 
     @cached_property
-    def _potential(self) -> ScatteringOperator[M0, M1, E]:  # type: ignore override private
+    def _potential(self) -> ScatteringOperator[M0, M1, E]:
         """The scattering operator."""
         return as_scattering_potential(
             operator.build.corrugated_morse_potential(

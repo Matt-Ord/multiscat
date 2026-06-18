@@ -24,6 +24,7 @@ MORSE_PARAMETERS = operator.build.CorrugatedMorseParameters(
     beta=0.05,
 )
 
+
 if __name__ == "__main__":
     metadata = scattering_metadata_from_stacked_delta_x(
         (

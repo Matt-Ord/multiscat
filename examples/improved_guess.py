@@ -67,7 +67,7 @@ class CheatCondition[
 
     @override
     def with_units(self, units: UnitSystem) -> CheatCondition[M0, M1, E]:
-        return CheatCondition[M0, M1, E](self._inner.with_units(units))  # type: ignore[return-value]
+        return CheatCondition[M0, M1, E](self._inner.with_units(units))  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
 
 
 if __name__ == "__main__":

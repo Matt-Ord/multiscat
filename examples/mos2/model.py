@@ -122,7 +122,7 @@ def _mos2_potential(
 def get_mos2_metadata[MZ: LengthMetadata](
     shape: tuple[int, int],
     metadata_z: MZ,
-    repeats: tuple[int, int] = (1,1),
+    repeats: tuple[int, int] = (1, 1),
     *,
     units: UnitSystem | None = None,
 ) -> ScatteringBasisMetadata[EvenlySpacedLengthMetadata, MZ, AxisDirections]:
@@ -141,7 +141,7 @@ def get_mos2_metadata[MZ: LengthMetadata](
 def build_mos2_potential[MZ: LengthMetadata](
     shape: tuple[int, int],
     metadata_z: MZ,
-    repeats: tuple[int, int] = (1,1),
+    repeats: tuple[int, int] = (1, 1),
     *,
     units: UnitSystem | None = None,
 ) -> Operator[
@@ -153,11 +153,13 @@ def build_mos2_potential[MZ: LengthMetadata](
     units = units or UnitSystem()
     metadata = get_mos2_metadata(shape, metadata_z, repeats=repeats, units=units)
 
+    angstrom = units.angstrom
+
     return as_scattering_potential(
         operator.build.potential_from_function(
             metadata,
             lambda positions: (
-                _mos2_potential(tuple(i / units.angstrom for i in positions))
+                _mos2_potential(tuple(i / angstrom for i in positions))
                 * (units.electron_volt * 1e-3)
             ),
         ),
