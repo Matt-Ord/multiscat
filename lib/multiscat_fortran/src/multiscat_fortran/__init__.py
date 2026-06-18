@@ -4,28 +4,28 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from multiscat_fortran._multiscat_f2py import (
+from multiscat_fortran._multiscat_f2py import (  # ty:ignore[unresolved-import]
     debug_apply_upper_block_fortran as _debug_apply_upper_block_fortran,  # type: ignore [import]
 )
-from multiscat_fortran._multiscat_f2py import (
+from multiscat_fortran._multiscat_f2py import (  # ty:ignore[unresolved-import]
     debug_build_preconditioner_fortran as _debug_build_preconditioner_fortran,  # type: ignore [import]
 )
-from multiscat_fortran._multiscat_f2py import (
+from multiscat_fortran._multiscat_f2py import (  # ty:ignore[unresolved-import]
     debug_solve_lower_block_fortran as _debug_solve_lower_block_fortran,  # type: ignore [import]
 )
-from multiscat_fortran._multiscat_f2py import (
+from multiscat_fortran._multiscat_f2py import (  # ty:ignore[unresolved-import]
     get_abc_arrays as _get_abc_arrays,  # type: ignore [import]
 )
-from multiscat_fortran._multiscat_f2py import (
+from multiscat_fortran._multiscat_f2py import (  # ty:ignore[unresolved-import]
     get_lobatto_weights as _get_lobatto_weights,  # type: ignore [import]
 )
-from multiscat_fortran._multiscat_f2py import (
+from multiscat_fortran._multiscat_f2py import (  # ty:ignore[unresolved-import]
     get_parallel_kinetic_energy as _get_parallel_kinetic_energy,  # type: ignore [import]
 )
-from multiscat_fortran._multiscat_f2py import (
+from multiscat_fortran._multiscat_f2py import (  # ty:ignore[unresolved-import]
     get_perpendicular_kinetic_difference as _get_perpendicular_kinetic_difference,  # type: ignore [import]
 )
-from multiscat_fortran._multiscat_f2py import (
+from multiscat_fortran._multiscat_f2py import (  # ty:ignore[unresolved-import]
     run_multiscat_fortran as _run_multiscat_fortran,  # type: ignore [import]
 )
 

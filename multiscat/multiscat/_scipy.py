@@ -467,7 +467,7 @@ def build_scipy_operator_data[
         lower_block_factors=lower_block_factors,
         outgoing_log_derivative_wave=outgoing_log_derivative_wave,
         channel_idx=channel_idx,
-        shape=condition.metadata.shape,  # type: ignore[shape]
+        shape=condition.metadata.shape,  # type: ignore[shape]  # ty:ignore[invalid-argument-type]
     )
 
 
@@ -508,7 +508,7 @@ def _build_scipy_operators[
     inverse_lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (state_size, state_size),
         _apply_inverse_lower,
-        dtype=np.complex128,  # type: ignore[assignment]
+        dtype=np.complex128,  # type: ignore[assignment]# ty:ignore[parameter-already-assigned]
     )
 
     def _apply_lower(
@@ -522,7 +522,7 @@ def _build_scipy_operators[
     lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (state_size, state_size),
         _apply_lower,
-        dtype=np.complex128,  # type: ignore[assignment]
+        dtype=np.complex128,  # type: ignore[assignment]# ty:ignore[parameter-already-assigned]
     )
 
     def _apply_upper(
@@ -536,7 +536,7 @@ def _build_scipy_operators[
     upper = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (state_size, state_size),
         _apply_upper,
-        dtype=np.complex128,  # type: ignore[assignment]
+        dtype=np.complex128,  # type: ignore[assignment]  # ty:ignore[parameter-already-assigned]
     )
     return inverse_lower, lower, upper
 
@@ -574,7 +574,7 @@ def run_multiscat_scipy[
         config=config,
     )
 
-    return solution.reshape(condition.metadata.shape)  # type: ignore[cant infer shape]
+    return solution.reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]
 
 
 def get_scattering_state_scipy[
@@ -610,4 +610,4 @@ def get_scattering_state_scipy[
         lower=lower,
     )
 
-    return solution.reshape(condition.metadata.shape)  # type: ignore[cant infer shape]
+    return solution.reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]

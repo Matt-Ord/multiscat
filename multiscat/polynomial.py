@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 from slate_core import FundamentalBasis
@@ -17,10 +17,7 @@ def get_unnormalized_polynomials(
     """Get the lobatto polynomials for the lobatto points."""
     domain = np.array([metadata.values[0], metadata.values[-1]])
     polynomials = [
-        cast(
-            "np.polynomial.Polynomial",
-            np.polynomial.Polynomial.fromroots(np.delete(metadata.values, i), domain),  # type: ignore bad library type
-        )
+        np.polynomial.Polynomial.fromroots(np.delete(metadata.values, i), domain)
         for i in range(metadata.values.size)
     ]
     return [

@@ -70,7 +70,7 @@ def plot_scattering_state[
 
     anim = animation.FuncAnimation(
         fig,
-        _update,  # type: ignore[reportArgumentType]
+        _update,  # type: ignore[reportArgumentType]  # ty:ignore[invalid-argument-type]
         frames=abs_state.shape[2],
         interval=80,
         blit=True,  # cspell: disable-line

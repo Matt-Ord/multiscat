@@ -99,7 +99,7 @@ def _build_scipy_von_neumann_operators[
     operator_a = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (state_size, state_size),
         _matvec_a,
-        dtype=np.complex128,  # type: ignore[assignment]
+        dtype=np.complex128,  # type: ignore[assignment] # ty:ignore[parameter-already-assigned]
     )
 
     def _matvec_preconditioner(
@@ -118,7 +118,7 @@ def _build_scipy_von_neumann_operators[
     preconditioner = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         (state_size, state_size),
         _matvec_preconditioner,
-        dtype=np.complex128,  # type: ignore[assignment]
+        dtype=np.complex128,  # type: ignore[assignment]  # ty:ignore[parameter-already-assigned]
     )
 
     return operator_a, preconditioner
@@ -181,4 +181,4 @@ def run_multiscat_scipy_von_neumann[
         )
         raise RuntimeError(msg)
 
-    return np.asarray(solution, dtype=np.complex128).reshape(condition.metadata.shape)  # type: ignore[cant infer shape]
+    return np.asarray(solution, dtype=np.complex128).reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]
