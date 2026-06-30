@@ -76,7 +76,7 @@ def _as_natural_units[
     )
 
     # In these units, the kinetic energy is simply k^2
-    assert out.mass == (1 / 2)  # noqa: S101
+    assert np.isclose(out.mass, 1 / 2)  # noqa: S101
     return out
 
 

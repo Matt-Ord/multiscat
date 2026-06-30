@@ -81,8 +81,8 @@ def plot_scattering_state[
 if __name__ == "__main__":
     metadata = scattering_metadata_from_stacked_delta_x(
         (
-            np.array([UNIT_CELL, 0, 0]),
-            np.array([0, UNIT_CELL, 0]),
+            np.array([UNIT_CELL / np.sqrt(2), 0, 0]),
+            np.array([UNIT_CELL / np.sqrt(8), np.sqrt(3) * UNIT_CELL / np.sqrt(8), 0]),
             np.array([0, 0, Z_HEIGHT]),
         ),
         (15, 15, 200),
@@ -92,22 +92,29 @@ if __name__ == "__main__":
         metadata,
     )
     condition = ScatteringCondition.from_angles(
-        mass=HELIUM_MASS,
+        mass=3 * HELIUM_MASS,
         energy=HELIUM_ENERGY,
         theta=np.deg2rad(30),
-        phi=np.deg2rad(0),
+        phi=np.deg2rad(60),
         potential=potential,
     )
     config = OptimizationConfig(precision=1e-5, max_iterations=1000, n_channels=80)
     s_matrix = get_scattering_matrix(condition, config, backend="scipy")
 
-    fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs")
+    fig, ax, _mesh = plot.array_against_axes_2d_k_nearest_neighbor(
+        s_matrix,
+        measure="abs",
+    )
     ax.set_title("The scattering matrix")
     fig.show()
+    fig.savefig("scattering_matrix.1.png", dpi=300)  # cspell: disable-line
 
     s_matrix = get_scattering_matrix_von_neumann(condition, config, order=2)
 
-    fig, ax, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs")
+    fig, ax, _mesh = plot.array_against_axes_2d_k_nearest_neighbor(
+        s_matrix,
+        measure="abs",
+    )
     ax.set_title("The scattering matrix 2")
     fig.show()
 
