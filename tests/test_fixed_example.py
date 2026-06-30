@@ -35,7 +35,9 @@ from multiscat.basis import (
 from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat import (
     get_scattering_matrix,
+    get_scattering_matrix_from_state,
     get_scattering_matrix_von_neumann,
+    get_scattering_state,
 )
 from multiscat.multiscat._fortran import (
     _condition_parameters,
@@ -351,6 +353,35 @@ def test_simple_system_scipy_backend() -> None:
         (nx, ny),
     )
     np.testing.assert_allclose(intensities, expected, rtol=0.0, atol=1e-5)
+
+
+def test_simple_system_scattering_matrix_from_state_matches_direct() -> None:
+    condition, config = _simple_example_condition()
+    direct = get_scattering_matrix(condition, config, backend="scipy")
+    state = get_scattering_state(condition, config)
+    recovered = get_scattering_matrix_from_state(
+        state,
+        condition,
+        n_channels=config.n_channels,
+    )
+
+    direct_intensities = np.real_if_close(
+        direct.with_basis(
+            basis.transformed_from_metadata(direct.basis.metadata()),
+        ).raw_data.reshape(condition.metadata.shape[:2]),
+    )
+    recovered_intensities = np.real_if_close(
+        recovered.with_basis(
+            basis.transformed_from_metadata(recovered.basis.metadata()),
+        ).raw_data.reshape(condition.metadata.shape[:2]),
+    )
+
+    np.testing.assert_allclose(
+        recovered_intensities,
+        direct_intensities,
+        rtol=0.0,
+        atol=1e-5,
+    )
 
 
 @pytest.mark.parametrize("order", [0, 1, 2])

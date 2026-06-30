@@ -20,6 +20,7 @@ from multiscat.basis import (
     scattering_metadata_from_stacked_delta_x,
 )
 from multiscat.multiscat import (
+    get_scattering_matrix_from_state,
     get_scattering_matrix_von_neumann,
     get_scattering_state,
 )
@@ -107,7 +108,7 @@ if __name__ == "__main__":
     )
     ax.set_title("The scattering matrix")
     fig.show()
-    fig.savefig("scattering_matrix.1.png", dpi=300)  # cspell: disable-line
+    fig.savefig("scattering_matrix.0.png", dpi=300)  # cspell: disable-line
 
     s_matrix = get_scattering_matrix_von_neumann(condition, config, order=2)
 
@@ -117,10 +118,22 @@ if __name__ == "__main__":
     )
     ax.set_title("The scattering matrix 2")
     fig.show()
+    fig.savefig("scattering_matrix.1.png", dpi=300)
 
     state = get_scattering_state(condition, config)
     fig, ax, anim = plot_scattering_state(state)
     fig.show()
     anim.save("scattering_state_animation.gif", writer="pillow")  # cspell: disable-line
+
+    fig, ax, _mesh = plot.array_against_axes_2d_k_nearest_neighbor(
+        get_scattering_matrix_from_state(
+            state,
+            condition,
+            n_channels=config.n_channels,
+        ),
+        measure="abs",
+    )
+    ax.set_title("The scattering matrix 3")
+    fig.savefig("scattering_matrix.2.png", dpi=300)  # cspell: disable-line
 
     plot.wait_for_close()
