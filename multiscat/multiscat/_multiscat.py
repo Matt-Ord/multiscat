@@ -67,6 +67,11 @@ def _as_natural_units[
     LobattoSpacedLengthMetadata,
     AxisDirections,
 ]:
+    # Here, we convert the scattering condition to the natural units of the problem
+    # In these units, the kinetic energy is simply k^2 which simplifies the
+    # later calculations significantly.
+    # To do this, we set hbar = 1, and the condition.mass = 1/2. This means scaling the
+    # value of the atomic mass by a factor of 1 / (2 * condition.mass).
     out = condition.with_units(
         UnitSystem(
             angstrom=1.0,
@@ -75,7 +80,7 @@ def _as_natural_units[
         ),
     )
 
-    # In these units, the kinetic energy is simply k^2
+    # This is a quick check to make sure that the mass is indeed 1/2 in the new units.
     assert np.isclose(out.mass, 1 / 2)  # noqa: S101
     return out
 
