@@ -23,7 +23,11 @@ from multiscat.basis import (
 )
 from multiscat.config import UnitSystem
 from multiscat.multiscat._fortran import run_multiscat_fortran
-from multiscat.multiscat._scipy import get_scattering_state_scipy, run_multiscat_scipy
+from multiscat.multiscat._scipy import (
+    _build_scipy_operators,
+    get_scattering_state_scipy,
+    run_multiscat_scipy,
+)
 from multiscat.multiscat._scipy_von_neumann import run_multiscat_scipy_von_neumann
 from multiscat.multiscat._util import (
     get_ab_wave_for_condition,  # type: ignore[import-untyped]
@@ -33,7 +37,7 @@ if TYPE_CHECKING:
     from multiscat.config import OptimizationConfig, ScatteringCondition
 
 
-def get_scattered_intensity[
+def _get_scattered_intensity_data[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
@@ -54,6 +58,45 @@ def get_scattered_intensity[
     # we are subtracting the incoming component
     surface_state[0, 0] += a_wave[0, 0]
     return np.abs(surface_state) ** 2
+
+
+def get_scattering_matrix_from_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    state: State[
+        Basis[ScatteringBasisMetadata[M0, M1, E]],
+        np.dtype[np.complex128],
+    ],
+    condition: ScatteringCondition[M0, M1, E],
+    *,
+    n_channels: int | None = None,
+) -> Array[
+    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
+    np.dtype[np.complex128],
+]:
+    """Recover per-channel intensities from the optimized scattered state."""
+    converted_condition = _as_natural_units(condition)
+    inverse_lower, _lower, _upper = _build_scipy_operators(
+        converted_condition,
+        n_channels=n_channels,
+    )
+
+    solution = inverse_lower.matvec(
+        state.with_basis(close_coupling_basis(condition.metadata)).raw_data,
+    ).reshape(condition.metadata.shape)
+
+    channel_intensity = _get_scattered_intensity_data(
+        solution,
+        converted_condition,
+    )
+
+    metadata_x01, _ = split_scattering_metadata(condition.metadata)
+    return Array(
+        AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
+        channel_intensity.astype(np.complex128),
+    )
 
 
 def _as_natural_units[
@@ -120,7 +163,7 @@ def get_scattering_matrix[
         msg = f"Unknown backend '{backend}'. Expected 'fortran' or 'scipy'."
         raise ValueError(msg)
 
-    channel_intensity = get_scattered_intensity(
+    channel_intensity = _get_scattered_intensity_data(
         solution,
         converted_condition,
     )
@@ -169,7 +212,7 @@ def get_scattering_matrix_von_neumann[
         order=order,
     )
 
-    channel_intensity = get_scattered_intensity(
+    channel_intensity = _get_scattered_intensity_data(
         solution,
         converted_condition,
     )
