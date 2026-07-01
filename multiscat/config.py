@@ -87,7 +87,7 @@ class UnitSystem:
 SI_UNITS = UnitSystem.si()
 
 
-class ScatteringCondition[
+class ScatteringCondition[  # noqa: PLW1641
     M0: EvenlySpacedLengthMetadata = EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata = LobattoSpacedLengthMetadata,
     E: AxisDirections = AxisDirections,
@@ -296,7 +296,7 @@ def _with_units[
     )
 
 
-class MorseScatteringCondition[
+class MorseScatteringCondition[  # noqa: PLW1641
     M0: EvenlySpacedLengthMetadata = EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata = LobattoSpacedLengthMetadata,
     E: AxisDirections = AxisDirections,
