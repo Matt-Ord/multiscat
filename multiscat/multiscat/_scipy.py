@@ -556,7 +556,7 @@ def run_multiscat_scipy[
         n_channels=config.n_channels,
     )
     target_state = (
-        get_target_state(condition)
+        get_target_state(condition.metadata, condition.incident_k)
         .with_basis(
             close_coupling_basis(condition.metadata),
         )
@@ -591,7 +591,7 @@ def get_scattering_state_scipy[
         n_channels=config.n_channels,
     )
     target_state = (
-        get_target_state(condition)
+        get_target_state(condition.metadata, condition.incident_k)
         .with_basis(
             close_coupling_basis(condition.metadata),
         )

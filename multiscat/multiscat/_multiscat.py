@@ -43,10 +43,11 @@ def _get_scattered_intensity_data[
     E: AxisDirections,
 ](
     solution: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
-    condition: ScatteringCondition[M0, M1, E],
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+    incident_k: tuple[float, float, float],
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
     """Recover per-channel intensities from the optimized scattered state."""
-    a_wave, b_wave = get_ab_wave_for_condition(condition)
+    a_wave, b_wave = get_ab_wave_for_condition(metadata, incident_k)
 
     surface_solution = solution[:, :, -1]
     # b_wave is the inverse of the outgoing wave amplitude
@@ -77,22 +78,26 @@ def get_scattering_matrix_from_state[
     np.dtype[np.complex128],
 ]:
     """Recover per-channel intensities from the optimized scattered state."""
+    # TODO: is feels wasteful to need the L^(-1) on the full grid here  # noqa: FIX002
+    # we should investigate if we can do it just from the surface state
     converted_condition = _as_natural_units(condition)
     inverse_lower, _lower, _upper = _build_scipy_operators(
         converted_condition,
         n_channels=n_channels,
     )
+    metadata = state.basis.metadata()
 
     solution = inverse_lower.matvec(
-        state.with_basis(close_coupling_basis(condition.metadata)).raw_data,
-    ).reshape(condition.metadata.shape)
+        state.with_basis(close_coupling_basis(metadata)).raw_data,
+    ).reshape(metadata.shape)
 
     channel_intensity = _get_scattered_intensity_data(
         solution,
-        converted_condition,
+        converted_condition.metadata,
+        converted_condition.incident_k,
     )
 
-    metadata_x01, _ = split_scattering_metadata(condition.metadata)
+    metadata_x01, _ = split_scattering_metadata(metadata)
     return Array(
         AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
         channel_intensity.astype(np.complex128),
@@ -165,7 +170,8 @@ def get_scattering_matrix[
 
     channel_intensity = _get_scattered_intensity_data(
         solution,
-        converted_condition,
+        converted_condition.metadata,
+        converted_condition.incident_k,
     )
 
     metadata_x01, _ = split_scattering_metadata(condition.metadata)
@@ -214,7 +220,8 @@ def get_scattering_matrix_von_neumann[
 
     channel_intensity = _get_scattered_intensity_data(
         solution,
-        converted_condition,
+        converted_condition.metadata,
+        converted_condition.incident_k,
     )
 
     metadata_x01, _ = split_scattering_metadata(condition.metadata)
