@@ -199,6 +199,16 @@ class ScatteringCondition[
         """Convert this scattering condition to a different unit system."""
         return _with_units(self, units)
 
+    def __eq__(self, other: object) -> bool:  # noqa: D105
+        if not isinstance(other, ScatteringCondition):
+            return False
+        return (
+            self.mass == other.mass
+            and self.incident_k == other.incident_k
+            and self.potential == other.potential
+            and self.units == other.units
+        )
+
 
 def momentum_from_angles(
     theta: float,
@@ -355,3 +365,13 @@ class MorseScatteringCondition[
     def potential(self) -> ScatteringOperator[M0, M1, E]:
         """The scattering operator."""
         return self._potential
+
+    def __eq__(self, other: object) -> bool:  # noqa: D105
+        if not isinstance(other, MorseScatteringCondition):
+            return super().__eq__(other)
+        return (
+            self.mass == other.mass
+            and self.incident_k == other.incident_k
+            and self.units == other.units
+            and self.morse_parameters == other.morse_parameters
+        )
