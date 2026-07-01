@@ -4,9 +4,6 @@ import numpy as np
 from slate_quantum import State
 
 if TYPE_CHECKING:
-    from multiscat.config import (  # type: ignore[import-untyped]
-        ScatteringCondition,
-    )
     from multiscat.interpolate import ScatteringOperator
 
 
@@ -71,6 +68,8 @@ def get_perpendicular_kinetic_difference(
     # TODO: we should represent this data as an Operator in a sparse # noqa: FIX002
     # basis. Issue is that the array does not have and index for the parallel
     # direction, so we cannot use existing ContractedBasis functionality
+    # TODO: the metadata could maybe somehow specify this offset,  # noqa: FIX002
+    # rather than passing it in as a parameter.
     (kx, ky) = fundamental_stacked_k_points(metadata, offset=incident_k[:2])
     return ((kx**2 + ky**2) - np.linalg.norm(incident_k) ** 2).reshape(metadata.shape)  # type: ignore[no-untyped-call]
 
@@ -118,15 +117,16 @@ def get_ab_wave_for_condition[
     M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
 ](
-    condition: ScatteringCondition[M0, M1, E],
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+    incident_k: tuple[float, float, float],
 ) -> tuple[
     np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     np.ndarray[tuple[int, int], np.dtype[np.complex128]],
 ]:
     """Get the asymptotic initial state and final scattered state amplitude factors."""
-    metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
+    metadata_x01, metadata_z = split_scattering_metadata(metadata)
     perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
-        condition.incident_k,
+        incident_k,
         metadata_x01,
     )
     return get_ab_waves(metadata_z, perpendicular_kinetic_difference)
@@ -181,17 +181,18 @@ def get_target_state[
     M1: LobattoSpacedLengthMetadata,
     E: AxisDirections,
 ](
-    condition: ScatteringCondition[M0, M1, E],
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+    incident_k: tuple[float, float, float],
 ) -> State[Basis[ScatteringBasisMetadata[M0, M1, E]]]:
     """Get the target state of the scattering problem."""
-    _, metadata_z = split_scattering_metadata(condition.metadata)
-    initial_state = np.zeros(condition.metadata.shape, dtype=np.complex128)
-    specular_perpendicular_kinetic_difference = -(condition.incident_k[2] ** 2)
+    _, metadata_z = split_scattering_metadata(metadata)
+    initial_state = np.zeros(metadata.shape, dtype=np.complex128)
+    specular_perpendicular_kinetic_difference = -(incident_k[2] ** 2)
     initial_state[0, 0, -1] = get_b_wave(
         metadata_z,
         specular_perpendicular_kinetic_difference,
     )
     return State(
-        close_coupling_basis(condition.metadata).upcast(),
+        close_coupling_basis(metadata).upcast(),
         initial_state.ravel(),
     )
