@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 from slate_core import (
@@ -21,7 +21,7 @@ from multiscat.basis import (
     close_coupling_basis,
     split_scattering_metadata,
 )
-from multiscat.config import UnitSystem
+from multiscat.config import OptimizationConfig, UnitSystem
 from multiscat.multiscat._fortran import run_multiscat_fortran
 from multiscat.multiscat._scipy import (
     _build_scipy_operators,
@@ -35,7 +35,7 @@ from multiscat.multiscat._util import (
 )
 
 if TYPE_CHECKING:
-    from multiscat.config import OptimizationConfig, ScatteringCondition
+    from multiscat.config import ScatteringCondition
 
 
 def _get_scattered_intensity_data[
@@ -62,6 +62,77 @@ def _get_scattered_intensity_data[
     return np.abs(surface_state) ** 2
 
 
+def get_scattering_matrix_from_preconditioned_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    state: State[
+        Basis[ScatteringBasisMetadata[M0, M1, E]],
+        np.dtype[np.complex128],
+    ],
+    condition: ScatteringCondition[M0, M1, E],
+) -> Array[
+    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
+    np.dtype[np.complex128],
+]:
+    """Recover per-channel intensities from the optimized scattered state."""
+    metadata = state.basis.metadata()
+
+    solution = state.with_basis(close_coupling_basis(metadata)).raw_data
+
+    converted_condition = _as_natural_units(condition)
+    channel_intensity = _get_scattered_intensity_data(
+        solution,
+        converted_condition.metadata,
+        converted_condition.incident_k,
+    )
+
+    metadata_x01, _ = split_scattering_metadata(metadata)
+    return Array(
+        AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
+        channel_intensity.astype(np.complex128),
+    )
+
+
+def get_preconditioned_state_from_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    state: State[
+        Basis[ScatteringBasisMetadata[M0, M1, E]],
+        np.dtype[np.complex128],
+    ],
+    condition: ScatteringCondition[M0, M1, E],
+    n_channels: int | None = None,
+) -> State[
+    Basis[ScatteringBasisMetadata[M0, M1, E]],
+    np.dtype[np.complex128],
+]:
+    """Get the preconditioned scattering state from the optimized scattered state."""
+    converted_condition = _as_natural_units(condition)
+    # TODO: is feels wasteful to need the L^(-1) on the full grid here  # noqa: FIX002
+    # we should investigate if we can do it just from the surface state
+    inverse_lower, _lower, _upper = _build_scipy_operators(
+        converted_condition,
+        n_channels=n_channels,
+    )
+    metadata = state.basis.metadata()
+
+    preconditioned_solution = inverse_lower.matvec(
+        state.with_basis(close_coupling_basis(metadata)).raw_data,
+    ).reshape(metadata.shape)
+
+    return State(
+        close_coupling_basis(condition.metadata).upcast(),
+        cast(
+            "np.ndarray[tuple[int], np.dtype[np.complex128]]",
+            preconditioned_solution,
+        ),
+    )
+
+
 def get_scattering_matrix_from_state[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,
@@ -79,65 +150,14 @@ def get_scattering_matrix_from_state[
     np.dtype[np.complex128],
 ]:
     """Recover per-channel intensities from the optimized scattered state."""
-    # TODO: is feels wasteful to need the L^(-1) on the full grid here  # noqa: FIX002
-    # we should investigate if we can do it just from the surface state
-    converted_condition = _as_natural_units(condition)
-    inverse_lower, _lower, _upper = _build_scipy_operators(
-        converted_condition,
+    preconditioned_state = get_preconditioned_state_from_state(
+        state,
+        condition,
         n_channels=n_channels,
     )
-    metadata = state.basis.metadata()
-
-    solution = inverse_lower.matvec(
-        state.with_basis(close_coupling_basis(metadata)).raw_data,
-    ).reshape(metadata.shape)
-
-    channel_intensity = _get_scattered_intensity_data(
-        solution,
-        converted_condition.metadata,
-        converted_condition.incident_k,
-    )
-
-    metadata_x01, _ = split_scattering_metadata(metadata)
-    return Array(
-        AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
-        channel_intensity.astype(np.complex128),
-    )
-
-
-def get_scattering_matrix_from_preconditioned_state[
-    M0: EvenlySpacedLengthMetadata,
-    M1: LobattoSpacedLengthMetadata,
-    E: AxisDirections,
-](
-    state: State[
-        Basis[ScatteringBasisMetadata[M0, M1, E]],
-        np.dtype[np.complex128],
-    ],
-    condition: ScatteringCondition[M0, M1, E],
-) -> Array[
-    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
-    np.dtype[np.complex128],
-]:
-    """Recover per-channel intensities from the optimized scattered state."""
-    # TODO: is feels wasteful to need the L^(-1) on the full grid here  # noqa: FIX002
-    # we should investigate if we can do it just from the surface state
-    converted_condition = _as_natural_units(condition)
-
-    metadata = state.basis.metadata()
-
-    solution = state.with_basis(close_coupling_basis(metadata)).raw_data
-
-    channel_intensity = _get_scattered_intensity_data(
-        solution,
-        converted_condition.metadata,
-        converted_condition.incident_k,
-    )
-
-    metadata_x01, _ = split_scattering_metadata(metadata)
-    return Array(
-        AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
-        channel_intensity.astype(np.complex128),
+    return get_scattering_matrix_from_preconditioned_state(
+        preconditioned_state,
+        condition,
     )
 
 
