@@ -79,11 +79,13 @@ def get_scattering_matrix_from_preconditioned_state[
     """Recover per-channel intensities from the optimized scattered state."""
     metadata = state.basis.metadata()
 
-    solution = state.with_basis(close_coupling_basis(metadata)).raw_data
+    solution = state.with_basis(close_coupling_basis(metadata)).raw_data.reshape(
+        metadata.shape,
+    )
 
     converted_condition = _as_natural_units(condition)
     channel_intensity = _get_scattered_intensity_data(
-        solution,
+        solution,  # ty:ignore[invalid-argument-type]
         converted_condition.metadata,
         converted_condition.incident_k,
     )
