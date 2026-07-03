@@ -611,3 +611,38 @@ def get_scattering_state_scipy[
     )
 
     return solution.reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]
+
+
+def get_preconditioned_scattering_state_scipy[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+    config: OptimizationConfig,
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
+    """Run Multiscat through the scipy GMRES solver."""
+    inverse_lower, _lower, upper = _build_scipy_operators(
+        condition,
+        n_channels=config.n_channels,
+    )
+    target_state = (
+        get_target_state(condition.metadata, condition.incident_k)
+        .with_basis(
+            close_coupling_basis(condition.metadata),
+        )
+        .raw_data.ravel()
+    )
+    initial_state = condition.initial_state.with_basis(
+        close_coupling_basis(condition.metadata),
+    ).raw_data.ravel()
+
+    solution = run_gauss_seidel_gradient_decent(  # cspell: disable-line
+        target_state=target_state,
+        initial_state=initial_state,
+        inverse_lower=inverse_lower,
+        upper=upper,
+        config=config,
+    )
+
+    return solution.reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]
