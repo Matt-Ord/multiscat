@@ -25,6 +25,7 @@ from multiscat.config import UnitSystem
 from multiscat.multiscat._fortran import run_multiscat_fortran
 from multiscat.multiscat._scipy import (
     _build_scipy_operators,
+    get_preconditioned_scattering_state_scipy,
     get_scattering_state_scipy,
     run_multiscat_scipy,
 )
@@ -90,6 +91,42 @@ def get_scattering_matrix_from_state[
     solution = inverse_lower.matvec(
         state.with_basis(close_coupling_basis(metadata)).raw_data,
     ).reshape(metadata.shape)
+
+    channel_intensity = _get_scattered_intensity_data(
+        solution,
+        converted_condition.metadata,
+        converted_condition.incident_k,
+    )
+
+    metadata_x01, _ = split_scattering_metadata(metadata)
+    return Array(
+        AsUpcast(basis.transformed_from_metadata(metadata_x01), metadata_x01),
+        channel_intensity.astype(np.complex128),
+    )
+
+
+def get_scattering_matrix_from_preconditioned_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    state: State[
+        Basis[ScatteringBasisMetadata[M0, M1, E]],
+        np.dtype[np.complex128],
+    ],
+    condition: ScatteringCondition[M0, M1, E],
+) -> Array[
+    Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
+    np.dtype[np.complex128],
+]:
+    """Recover per-channel intensities from the optimized scattered state."""
+    # TODO: is feels wasteful to need the L^(-1) on the full grid here  # noqa: FIX002
+    # we should investigate if we can do it just from the surface state
+    converted_condition = _as_natural_units(condition)
+
+    metadata = state.basis.metadata()
+
+    solution = state.with_basis(close_coupling_basis(metadata)).raw_data
 
     channel_intensity = _get_scattered_intensity_data(
         solution,
@@ -246,6 +283,28 @@ def get_scattering_state[
     """Get the full scattering state, including the interior."""
     converted_condition = _as_natural_units(condition)
     solution = get_scattering_state_scipy(converted_condition, config)
+
+    return State(
+        close_coupling_basis(condition.metadata).upcast(),
+        solution,
+    )
+
+
+@timed
+def get_preconditioned_scattering_state[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+    config: OptimizationConfig,
+) -> State[
+    Basis[ScatteringBasisMetadata[M0, M1, E]],
+    np.dtype[np.complex128],
+]:
+    """Get the full scattering state, including the interior."""
+    converted_condition = _as_natural_units(condition)
+    solution = get_preconditioned_scattering_state_scipy(converted_condition, config)
 
     return State(
         close_coupling_basis(condition.metadata).upcast(),
