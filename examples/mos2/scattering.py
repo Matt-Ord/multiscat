@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numpy as np
 from model import build_mos2_potential
 from scipy.constants import (  # type: ignore[import-untyped]

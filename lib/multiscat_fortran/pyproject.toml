@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 name = "multiscat_fortran"
 version = "0.1.0"
 description = "Standalone f2py bindings for Multiscat Fortran core"
-requires-python = ">=3.14"
+requires-python = ">=3.13,<3.15"
 dependencies = ["numpy>=2.0.0,<3.0.0"]
 
 [tool.setuptools]

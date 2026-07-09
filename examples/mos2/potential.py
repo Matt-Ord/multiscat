@@ -1,3 +1,4 @@
+from __future__ import annotations
 from model import build_mos2_potential
 from slate_core import EvenlySpacedLengthMetadata, array, plot
 from slate_core import metadata as _metadata

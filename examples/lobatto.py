@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numpy as np
 from slate_core import plot
 from slate_core.metadata import Domain, LobattoSpacedMetadata

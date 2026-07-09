@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numpy as np
 from slate_core import array, plot
 from slate_core import metadata as _metadata

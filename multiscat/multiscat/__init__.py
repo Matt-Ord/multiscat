@@ -1,3 +1,4 @@
+from __future__ import annotations
 from multiscat.multiscat._multiscat import (
     get_preconditioned_scattering_state,
     get_scattering_matrix,

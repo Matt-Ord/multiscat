@@ -1,10 +1,12 @@
+from __future__ import annotations
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 import scipy.sparse  # type: ignore[import-untyped]
 import scipy.sparse.linalg  # type: ignore[import-untyped]
+from scipy.sparse.linalg import LinearOperator
 from slate_core.metadata import (
     AxisDirections,
     EvenlySpacedLengthMetadata,
@@ -15,6 +17,7 @@ from multiscat.basis import (
     close_coupling_basis,
     split_scattering_metadata,
 )
+from multiscat.config import OptimizationConfig, ScatteringCondition
 from multiscat.multiscat._gmres import (
     run_gauss_seidel_gradient_decent,  # cspell: disable-line
 )
@@ -25,11 +28,6 @@ from multiscat.multiscat._util import (
     get_target_state,
     potential_as_array,  # type: ignore[import-untyped]
 )
-
-if TYPE_CHECKING:
-    from scipy.sparse.linalg import LinearOperator  # type: ignore[untyped]
-
-    from multiscat.config import OptimizationConfig, ScatteringCondition
 
 
 def _solve_specular_hamiltonian(

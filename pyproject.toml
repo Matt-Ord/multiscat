@@ -4,12 +4,12 @@ version = "0.1.0"
 description = ""
 authors = [{ name = "Matthew Ord", email = "matthew.ord1@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.14,<4.0"
+requires-python = ">=3.13,<3.15"
 dependencies = [
     "numpy>=2.0.0,<3.0.0",
     "scipy>=1.14.0,<2.0.0",
-    "slate_core @ git+https://github.com/Matt-Ord/slate.git@4aa5106",
-    "slate_quantum @ git+https://github.com/Matt-Ord/slate_quantum.git@cfd0fb9",
+    "slate_core @ git+https://github.com/Matt-Ord/slate.git@7bdf711145b1a2657b92128664e69d177dd9aac5",
+    "slate_quantum @ git+https://github.com/Matt-Ord/slate_quantum.git@13febf311e486b72de762364687fdf6c6ce2af55",
     "tqdm>=4.67.1",
 ]
 
