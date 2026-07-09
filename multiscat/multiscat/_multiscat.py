@@ -124,7 +124,7 @@ def get_preconditioned_state_from_state[
 
     preconditioned_solution = inverse_lower.matvec(
         state.with_basis(close_coupling_basis(metadata)).raw_data,
-    ).reshape(metadata.shape)
+    )
 
     return State(
         close_coupling_basis(condition.metadata).upcast(),
@@ -324,7 +324,7 @@ def get_preconditioned_scattering_state[
     Basis[ScatteringBasisMetadata[M0, M1, E]],
     np.dtype[np.complex128],
 ]:
-    """Get the full scattering state, including the interior."""
+    """Get the full preconditioned scattering state, including the interior."""
     converted_condition = _as_natural_units(condition)
     solution = get_preconditioned_scattering_state_scipy(converted_condition, config)
 

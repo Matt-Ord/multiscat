@@ -585,7 +585,7 @@ def get_scattering_state_scipy[
     condition: ScatteringCondition[M0, M1, E],
     config: OptimizationConfig,
 ) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
-    """Run Multiscat through the scipy GMRES solver."""
+    """Run Multiscat through the scipy GMRES solver and return L|psi>."""
     inverse_lower, lower, upper = _build_scipy_operators(
         condition,
         n_channels=config.n_channels,
@@ -621,7 +621,7 @@ def get_preconditioned_scattering_state_scipy[
     condition: ScatteringCondition[M0, M1, E],
     config: OptimizationConfig,
 ) -> np.ndarray[tuple[int, int, int], np.dtype[np.complex128]]:
-    """Run Multiscat through the scipy GMRES solver."""
+    """Run Multiscat through the scipy GMRES solver, and return L^(-1)|psi>."""
     inverse_lower, _lower, upper = _build_scipy_operators(
         condition,
         n_channels=config.n_channels,
