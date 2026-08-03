@@ -1,8 +1,6 @@
 from typing import TYPE_CHECKING
 
 import jax
-
-jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import jax.scipy.sparse.linalg
 from jax import Array
@@ -18,7 +16,7 @@ if TYPE_CHECKING:
 
 
 @timed
-def run_gauss_seidel_gradient_decent(
+def run_gauss_seidel_gradient_decent(  # noqa: PLR0913
     target_state: Array | np.ndarray,
     inverse_lower: Callable[[Array], Array],
     upper: Callable[[Array], Array],

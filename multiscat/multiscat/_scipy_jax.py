@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import jax
-
-jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import numpy as np
 from jax import Array, lax
@@ -84,7 +82,7 @@ def _build_lower_block_factors(
 def _apply_upper_block(
     state_vector: jnp.ndarray[tuple[int, int], jnp.dtype[np.complex128]],
     operator_data: ScipyOperatorData,
-):
+) -> jnp.ndarray[tuple[int, int], jnp.dtype[np.complex128]]:
     """
     Apply the off-diagonal channel-coupling potential V_1(z)Q(x,y).
 
@@ -93,10 +91,10 @@ def _apply_upper_block(
     between diffraction channels, this step represents the physical momentum
     transfer parallel to the corrugated surface.
     """
-    N = state_vector.shape[0]
+    n = state_vector.shape[0]
 
     upper = jnp.where(
-        jnp.triu(jnp.ones((N, N), dtype=bool), k=1)[:, :, None],
+        jnp.triu(jnp.ones((n, n), dtype=bool), k=1)[:, :, None],
         operator_data.potential_pairs,
         0,
     )
@@ -147,7 +145,7 @@ def apply_inverse_lower_block(
     n = state_vector.shape[0]
     channel_indices = jnp.arange(n)
 
-    def body(channel, solved):
+    def body(channel: int, solved: jnp.ndarray) -> jnp.ndarray:
         # 1. Mask out channels j >= channel so array shapes remain strictly static
         mask = (channel_indices < channel)[:, None]  # Shape: (n, 1)
         masked_solved = solved * mask  # Zeroes out rows >= channel
@@ -234,7 +232,9 @@ def apply_diagonal(
     operator_data: DiagonalOperatorData,
 ) -> Array:
     """
-    Apply uncoupled diagonal block operator D_i = (H_0 - E_i + C_i u_i v_i^T)
+    Apply uncoupled diagonal block operator.
+
+    D_i = (H_0 - E_i + C_i u_i v_i^T)
     to all channels in parallel.
     """
     # 1. Capture input boundary values at z = -1 before applying (H_0 - E_i)
@@ -434,13 +434,13 @@ def build_jax_operators[
     )
 
     # Bind operator_data via simple lambdas
-    def inverse_lower(state):
+    def inverse_lower(state: jnp.ndarray) -> jnp.ndarray:
         return apply_inverse_lower_op(state, operator_data)
 
-    def lower(state):
+    def lower(state: jnp.ndarray) -> jnp.ndarray:
         return apply_lower_op(state, operator_data)
 
-    def upper(state):
+    def upper(state: jnp.ndarray) -> jnp.ndarray:
         return apply_upper_op(state, operator_data)
 
     return inverse_lower, lower, upper

@@ -1,13 +1,10 @@
 import os
+from typing import Any
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 import functools
 import time
-
-import jax
-
-jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 import numpy as np
@@ -85,7 +82,7 @@ def get_target_and_initial(
     return jnp.asarray(target_state), jnp.asarray(initial_state)
 
 
-def _force_ready(result) -> None:
+def _force_ready(result: Any) -> None:  # noqa: ANN401
     if hasattr(result, "block_until_ready"):
         result.block_until_ready()
 
@@ -105,7 +102,9 @@ def time_solve(target_state, initial_state, inverse_lower, upper, config) -> flo
 
 if __name__ == "__main__":
     config = OptimizationConfig(
-        precision=1e-5, max_iterations=1000, n_channels=N_CHANNELS
+        precision=1e-5,
+        max_iterations=1000,
+        n_channels=N_CHANNELS,
     )
 
     # -----------------------------------------------------------------
@@ -121,15 +120,16 @@ if __name__ == "__main__":
     operator_data = build_scipy_operator_data(base_condition, n_channels=N_CHANNELS)
 
     stable_inverse_lower = functools.partial(
-        apply_inverse_lower_op, operator_data=operator_data
+        apply_inverse_lower_op,
+        operator_data=operator_data,
     )
     stable_upper = functools.partial(apply_upper_op, operator_data=operator_data)
 
     print(
-        "=== Test A: SAME inverse_lower/upper objects, only target/initial state vary ==="
+        "=== Test A: SAME inverse_lower/upper objects, only target/initial state vary ===",
     )
     print(
-        f"id(stable_inverse_lower)={id(stable_inverse_lower)}  id(stable_upper)={id(stable_upper)}"
+        f"id(stable_inverse_lower)={id(stable_inverse_lower)}  id(stable_upper)={id(stable_upper)}",
     )
 
     # warm up once
@@ -158,21 +158,25 @@ if __name__ == "__main__":
         # resulting `solution` is NOT meaningful here and shouldn't be
         # compared against another backend.
         elapsed = time_solve(
-            target_state, initial_state, stable_inverse_lower, stable_upper, config
+            target_state,
+            initial_state,
+            stable_inverse_lower,
+            stable_upper,
+            config,
         )
         same_object_times.append(elapsed)
         print(
             f"  theta={angle:5.1f}deg  time={elapsed:.4f}s  "
-            f"id(inverse_lower)={id(stable_inverse_lower)} (unchanged)"
+            f"id(inverse_lower)={id(stable_inverse_lower)} (unchanged)",
         )
 
     print(
         f"  mean={np.mean(same_object_times):.4f}s  std={np.std(same_object_times):.4f}s  "
-        f"max/min ratio={max(same_object_times) / min(same_object_times):.2f}x"
+        f"max/min ratio={max(same_object_times) / min(same_object_times):.2f}x",
     )
 
     print(
-        "\n=== Test B: FRESH inverse_lower/upper objects per angle (current real behavior) ==="
+        "\n=== Test B: FRESH inverse_lower/upper objects per angle (current real behavior) ===",
     )
     fresh_object_times = []
     for angle in ANGLES_DEG:
@@ -182,42 +186,52 @@ if __name__ == "__main__":
         # Rebuild operator_data AND the closures fresh every time,
         # matching what get_scattering_state_scipy_jax actually does today.
         fresh_operator_data = build_scipy_operator_data(
-            condition, n_channels=N_CHANNELS
+            condition,
+            n_channels=N_CHANNELS,
         )
         fresh_inverse_lower = functools.partial(
-            apply_inverse_lower_op, operator_data=fresh_operator_data
+            apply_inverse_lower_op,
+            operator_data=fresh_operator_data,
         )
         fresh_upper = functools.partial(
-            apply_upper_op, operator_data=fresh_operator_data
+            apply_upper_op,
+            operator_data=fresh_operator_data,
         )
 
         elapsed = time_solve(
-            target_state, initial_state, fresh_inverse_lower, fresh_upper, config
+            target_state,
+            initial_state,
+            fresh_inverse_lower,
+            fresh_upper,
+            config,
         )
         fresh_object_times.append(elapsed)
         print(
             f"  theta={angle:5.1f}deg  time={elapsed:.4f}s  "
-            f"id(inverse_lower)={id(fresh_inverse_lower)} (new every time)"
+            f"id(inverse_lower)={id(fresh_inverse_lower)} (new every time)",
         )
 
     print(
         f"  mean={np.mean(fresh_object_times):.4f}s  std={np.std(fresh_object_times):.4f}s  "
-        f"max/min ratio={max(fresh_object_times) / min(fresh_object_times):.2f}x"
+        f"max/min ratio={max(fresh_object_times) / min(fresh_object_times):.2f}x",
     )
 
     print("\n=== Verdict ===")
     same_cv = np.std(same_object_times) / np.mean(same_object_times)
     fresh_cv = np.std(fresh_object_times) / np.mean(fresh_object_times)
-    print(f"  coefficient of variation, SAME objects:  {same_cv:.3f}")
-    print(f"  coefficient of variation, FRESH objects: {fresh_cv:.3f}")
+    print(f"  coefficient of variation, SAME objects:  {same_cv:.3f}")  # noqa: T201
+    print(f"  coefficient of variation, FRESH objects: {fresh_cv:.3f}")  # noqa: T201
     if fresh_cv > same_cv * 1.5:
-        print(
-            "  => Supports closure-identity hypothesis: reusing A/M reduces call-to-call variance."
+        print(  # noqa: T201
+            "  => Supports closure-identity hypothesis: "
+            "reusing A/M reduces call-to-call variance.",
         )
     else:
-        print(
-            "  => Does NOT support closure-identity hypothesis: variance similar either way,"
+        print(  # noqa: T201
+            "  => Does NOT support closure-identity hypothesis: "
+            "variance similar either way,",
         )
-        print(
-            "     likely a genuine convergence/iteration-count difference across angles instead."
+        print(  # noqa: T201
+            "     likely a genuine convergence/iteration-count"
+            "difference across angles instead.",
         )
