@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import math
 import re
+import time
+from dataclasses import dataclass
 
 # pyright: reportPrivateUsage=false
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from jax import Array
 from multiscat_fortran import (
     debug_apply_upper_block_fortran,
     debug_build_preconditioner_fortran,
@@ -22,7 +27,7 @@ from scipy.constants import (  # type: ignore[import-untyped]
     electron_volt,
     physical_constants,
 )
-from slate_core import EvenlySpacedLengthMetadata, array, basis
+from slate_core import EvenlySpacedLengthMetadata, array, basis, plot
 from slate_core.metadata import LobattoSpacedLengthMetadata
 from slate_quantum import operator
 
@@ -46,6 +51,16 @@ from multiscat.multiscat._scipy import (
     _build_lower_block_factors,
     _build_scipy_operators,
     _solve_specular_hamiltonian,
+    get_scattering_state_scipy,
+)
+from multiscat.multiscat._scipy_jax import (
+    apply_inverse_lower_block,
+    apply_lower_op,
+    apply_upper_op,
+    get_scattering_state_scipy_jax,
+)
+from multiscat.multiscat._scipy_jax import (
+    build_scipy_operator_data as build_operator_data_jax,
 )
 from multiscat.multiscat._util import (
     get_ab_waves as _get_ab_waves,
@@ -61,6 +76,8 @@ from multiscat.multiscat._util import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from slate_core.metadata import AxisDirections
 
     from multiscat.interpolate import ScatteringOperator
@@ -689,3 +706,268 @@ def test_parallel_kinetic_energy_matches_fortran() -> None:
     # Match that block from Python and convert conventions with basis weights.
     expected = expected[1:, 1:]
     np.testing.assert_allclose(actual, -expected, rtol=2e-6)
+
+
+type JaxResult = Array | np.ndarray | tuple["JaxResult", ...] | list["JaxResult"]
+
+
+def _force_ready(result: JaxResult) -> None:
+    """Block until any JAX arrays in `result` are actually computed."""
+    if hasattr(result, "block_until_ready"):
+        result.block_until_ready()  # ty: ignore[call-non-callable]
+    elif isinstance(result, (tuple, list)):
+        for r in result:
+            _force_ready(r)
+
+
+def time_call(
+    fn: Callable[..., object],
+    *args: object,
+    n_repeats: int = 1,
+    **kwargs: object,
+) -> list[float]:
+    """Return wall-clock times for n_repeats calls (first entry = cold, rest = warm)."""
+    times = []
+    for _ in range(n_repeats):
+        t0 = time.perf_counter()
+        result = fn(*args, **kwargs)
+        _force_ready(cast("JaxResult", result))
+        times.append(time.perf_counter() - t0)
+    return times
+
+
+def summarize(times: list[float]) -> str:
+    arr = np.asarray(times)
+    return (
+        f"mean={arr.mean():.4f}s  std={arr.std():.4f}s  "
+        f"min={arr.min():.4f}s  n={len(arr)}"
+    )
+
+
+@dataclass
+class ProblemSize:
+    """Describes a benchmark problem's grid dimensions and physical parameters."""
+
+    label: str
+    grid_shape: tuple[int, int, int]  # (nkx, nky, nz)
+    z_height_angstrom: float
+    n_channels: int | None
+
+
+def build_condition_and_config(
+    size: ProblemSize,
+    *,
+    theta_deg: float = 30.0,
+    phi_deg: float = 0.0,
+) -> tuple[ScatteringCondition, OptimizationConfig]:
+    metadata = scattering_metadata_from_stacked_delta_x(
+        (
+            np.array([UNIT_CELL, 0, 0]),
+            np.array([0, UNIT_CELL, 0]),
+            np.array([0, 0, size.z_height_angstrom * angstrom]),
+        ),
+        size.grid_shape,
+    )
+    potential = as_scattering_potential(
+        operator.build.corrugated_morse_potential(metadata, MORSE_PARAMETERS),
+        metadata,
+    )
+    condition = ScatteringCondition.from_angles(
+        mass=HELIUM_MASS,
+        energy=20 * electron_volt * 10**-3,
+        theta=np.deg2rad(theta_deg),
+        phi=np.deg2rad(phi_deg),
+        potential=potential,
+    )
+    config = OptimizationConfig(
+        precision=1e-5,
+        max_iterations=1000,
+        n_channels=size.n_channels,
+    )
+    return condition, config
+
+
+def benchmark_warm_vs_cold(size: ProblemSize, *, n_repeats: int = 3) -> None:
+    condition, config = build_condition_and_config(size)
+
+    time_call(
+        get_scattering_state_scipy,
+        condition,
+        config,
+        n_repeats=n_repeats,
+    )
+    time_call(
+        get_scattering_state_scipy_jax,
+        condition,
+        config,
+        n_repeats=n_repeats,
+    )
+
+
+def benchmark_operator_overhead(size: ProblemSize, *, n_repeats: int = 20) -> None:
+    condition, _ = build_condition_and_config(size)
+
+    scipy_operator_data = _build_scipy_operators(condition, n_channels=size.n_channels)
+    jax_operator_data = build_operator_data_jax(condition, n_channels=size.n_channels)
+
+    inverse_lower_scipy, lower_scipy, upper_scipy = scipy_operator_data
+    nkx, nky, nz = jax_operator_data.shape
+    state_size = nkx * nky * nz
+
+    rng = np.random.default_rng(0)
+    test_vec_np = (
+        rng.standard_normal(state_size) + 1j * rng.standard_normal(state_size)
+    ).astype(np.complex128)
+    test_vec_jax = jnp.asarray(test_vec_np)
+
+    def time_scipy(
+        fn: Callable[[np.ndarray], object],
+        x: np.ndarray,
+        n: int,
+    ) -> list[float]:
+        times = []
+        for _ in range(n):
+            t0 = time.perf_counter()
+            fn(x)
+            times.append(time.perf_counter() - t0)
+        return times
+
+    def time_jax(
+        fn: Callable[[Array], Array],
+        x: Array,
+        n: int,
+    ) -> list[float]:
+        fn(x).block_until_ready()  # warm-up, not timed
+        times = []
+        for _ in range(n):
+            t0 = time.perf_counter()
+            fn(x).block_until_ready()
+            times.append(time.perf_counter() - t0)
+        return times
+
+    reshaped_jax = test_vec_jax.reshape((nkx * nky, nz))
+    selected_jax = reshaped_jax[jax_operator_data.channel_idx]
+
+    operators = {
+        "lower": (
+            lower_scipy.matvec,
+            lambda x: apply_lower_op(x, jax_operator_data),
+            test_vec_np,
+            test_vec_jax,
+        ),
+        "upper": (
+            upper_scipy.matvec,
+            lambda x: apply_upper_op(x, jax_operator_data),
+            test_vec_np,
+            test_vec_jax,
+        ),
+        "inverse_lower": (
+            inverse_lower_scipy.matvec,
+            lambda x: apply_inverse_lower_block(x, jax_operator_data),
+            test_vec_np,
+            selected_jax,
+        ),
+    }
+
+    for scipy_fn, jax_fn, np_input, jax_input in operators.values():
+        scipy_times = time_scipy(scipy_fn, np_input, n_repeats)
+        jax_times = time_jax(jax_fn, jax_input, n_repeats)
+        np.mean(jax_times) / np.mean(scipy_times)
+
+
+def benchmark_problem_size_sweep(
+    sizes: list[ProblemSize],
+    *,
+    n_repeats: int = 3,
+) -> None:
+    results = []
+    for size in sizes:
+        condition, config = build_condition_and_config(size)
+
+        # warm-up jax so the timed calls reflect steady state
+        for _ in range(2):
+            _force_ready(get_scattering_state_scipy_jax(condition, config))
+
+        scipy_times = time_call(
+            get_scattering_state_scipy,
+            condition,
+            config,
+            n_repeats=n_repeats,
+        )
+        jax_times = time_call(
+            get_scattering_state_scipy_jax,
+            condition,
+            config,
+            n_repeats=n_repeats,
+        )
+
+        scipy_mean, jax_mean = np.mean(scipy_times), np.mean(jax_times)
+        ratio = jax_mean / scipy_mean
+        results.append((size.label, scipy_mean, jax_mean, ratio))
+
+
+def benchmark_realistic_sweep(
+    size: ProblemSize,
+    angles_deg: list[float],
+    *,
+    n_warmup: int = 1,
+) -> None:
+    condition0, config0 = build_condition_and_config(size, theta_deg=angles_deg[0])
+    for _ in range(n_warmup):
+        _force_ready(get_scattering_state_scipy_jax(condition0, config0))
+
+    for angle in angles_deg:
+        condition, config = build_condition_and_config(size, theta_deg=angle)
+
+        t0 = time.perf_counter()
+        get_scattering_state_scipy(condition, config)
+        time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        _force_ready(get_scattering_state_scipy_jax(condition, config))
+        time.perf_counter() - t0
+
+
+def benchmark_varying_shape_sweep(sizes: list[ProblemSize]) -> None:
+    for size in sizes:
+        condition, config = build_condition_and_config(size)
+
+        t0 = time.perf_counter()
+        get_scattering_state_scipy(condition, config)
+        time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        _force_ready(get_scattering_state_scipy_jax(condition, config))
+        time.perf_counter() - t0
+
+
+def plot_scattering_matrix_comparison(size: ProblemSize, output_dir: Path) -> None:
+    condition, config = build_condition_and_config(size)
+
+    s_matrix_scipy = get_scattering_matrix(condition, config, backend="scipy")
+    s_matrix_jax = get_scattering_matrix(condition, config, backend="jax")
+
+    raw_scipy = np.abs(s_matrix_scipy.raw_data)
+    raw_jax = np.abs(s_matrix_jax.raw_data)
+    diff = np.abs(raw_scipy - raw_jax)
+
+    max_diff = diff.max()
+    max_diff / max(raw_scipy.max(), 1e-30)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    for ax, s_matrix, title in [
+        (axes[0], s_matrix_scipy, "scipy"),
+        (axes[1], s_matrix_jax, "jax"),
+    ]:
+        _, _, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs", ax=ax)
+        ax.set_title(f"Scattering matrix ({title})")
+
+    diff_im = axes[2].imshow(diff.reshape(int(np.sqrt(diff.size)), -1), cmap="magma")
+    axes[2].set_title(f"|scipy - jax|  (max={max_diff:.2e})")
+    fig.colorbar(diff_im, ax=axes[2])
+
+    save_path = output_dir / f"comparison_{size.label.split()[0]}.png"
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)

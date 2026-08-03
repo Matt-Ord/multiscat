@@ -29,6 +29,11 @@ from multiscat.multiscat._scipy import (
     get_scattering_state_scipy,
     run_multiscat_scipy,
 )
+from multiscat.multiscat._scipy_jax import (
+    get_preconditioned_scattering_state_scipy_jax,
+    get_scattering_state_scipy_jax,
+    run_multiscat_scipy_jax,
+)
 from multiscat.multiscat._scipy_von_neumann import run_multiscat_scipy_von_neumann
 from multiscat.multiscat._util import (
     get_ab_wave_for_condition,  # type: ignore[import-untyped]
@@ -50,7 +55,7 @@ def _get_scattered_intensity_data[
     """Recover per-channel intensities from the optimized scattered state."""
     a_wave, b_wave = get_ab_wave_for_condition(metadata, incident_k)
 
-    surface_solution = solution[:, :, -1]
+    surface_solution = np.array(solution[:, :, -1], copy=True)
     # b_wave is the inverse of the outgoing wave amplitude
     # b_wave is equal to o(r)^(-1)
     # This therefore recovers the scattered state from the
@@ -201,7 +206,7 @@ def get_scattering_matrix[
     condition: ScatteringCondition[M0, M1, E],
     config: OptimizationConfig,
     *,
-    backend: Literal["fortran", "scipy"] = "fortran",
+    backend: Literal["fortran", "scipy", "jax"] = "fortran",
 ) -> Array[
     Basis[TupleMetadata[tuple[M0, M0], AxisDirections]],
     np.dtype[np.complex128],
@@ -223,6 +228,8 @@ def get_scattering_matrix[
         solution = run_multiscat_fortran(converted_condition, config)
     elif backend == "scipy":
         solution = run_multiscat_scipy(converted_condition, config)
+    elif backend == "jax":
+        solution = run_multiscat_scipy_jax(converted_condition, config)
     else:
         msg = f"Unknown backend '{backend}'. Expected 'fortran' or 'scipy'."
         raise ValueError(msg)
@@ -298,13 +305,21 @@ def get_scattering_state[
 ](
     condition: ScatteringCondition[M0, M1, E],
     config: OptimizationConfig,
+    *,
+    backend: Literal["scipy", "jax"] = "scipy",
 ) -> State[
     Basis[ScatteringBasisMetadata[M0, M1, E]],
     np.dtype[np.complex128],
 ]:
     """Get the full scattering state, including the interior."""
     converted_condition = _as_natural_units(condition)
-    solution = get_scattering_state_scipy(converted_condition, config)
+    if backend == "scipy":
+        solution = get_scattering_state_scipy(converted_condition, config)
+    elif backend == "jax":
+        solution = get_scattering_state_scipy_jax(converted_condition, config)
+    else:
+        msg = f"Unknown backend '{backend}'. Expected 'jax' or 'scipy'."
+        raise ValueError(msg)
 
     return State(
         close_coupling_basis(condition.metadata).upcast(),
@@ -320,13 +335,27 @@ def get_preconditioned_scattering_state[
 ](
     condition: ScatteringCondition[M0, M1, E],
     config: OptimizationConfig,
+    *,
+    backend: Literal["scipy", "jax"] = "scipy",
 ) -> State[
     Basis[ScatteringBasisMetadata[M0, M1, E]],
     np.dtype[np.complex128],
 ]:
     """Get the full scattering state, including the interior."""
     converted_condition = _as_natural_units(condition)
-    solution = get_preconditioned_scattering_state_scipy(converted_condition, config)
+    if backend == "scipy":
+        solution = get_preconditioned_scattering_state_scipy(
+            converted_condition,
+            config,
+        )
+    elif backend == "jax":
+        solution = get_preconditioned_scattering_state_scipy_jax(
+            converted_condition,
+            config,
+        )
+    else:
+        msg = f"Unknown backend '{backend}'. Expected 'jax' or 'scipy'."
+        raise ValueError(msg)
 
     return State(
         close_coupling_basis(condition.metadata).upcast(),
