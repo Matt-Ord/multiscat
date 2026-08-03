@@ -25,14 +25,52 @@ def run_gauss_seidel_gradient_decent(  # noqa: PLR0913
     *,
     config: OptimizationConfig,
 ) -> Array:
+    """
+    Use gradient decent to solve the linear system (I + L^{-1} U) psi = L^{-1} psi.
+
+    This is equivalent to solving the original linear problem
+    (L + U) psi = b, but is more efficient to solve since the operator (I + L^{-1} U)
+    is closer to the identity.
+
+    The input to this function is the target state vector b.
+    The output of this function is L^{-1} psi, or simply psi if the
+    lower operator is provided.
+
+    Optionally, this probelm can be "double preconditioned"
+    by applying a first-order Neumann series approximation to the operator
+    (I - L^{-1} U) as a preconditioner to the GMRES solver. This should improve
+    convergence if L^{-1} U is small.
+    """
     target_state_jax = jnp.asarray(target_state)
 
     # 1. Linear operator: (I + L^(-1) U)
     def _apply_linear_operator(state: Array) -> Array:
+        """
+        Apply the preconditioned operator (I + L^{-1} * U) to the state vector.
+
+        In the "simple" problem, we would solve (H_0 + V + C_i u_iv_i^T) psi = b.
+        We split this operator into (L + U) psi = b
+        where L is the lower operator and U is the upper operator.
+
+        L contains the lower diagonal terms in the scattering
+        potential, and the diagonal terms
+        (H_0 and the boundary correction C_i u_i v_i^T).
+
+        We then apply the preconditioner L^{-1} to both sides, giving
+        (I + L^{-1} * U) psi = L^{-1} b
+
+        We always use the specular preconditioner L^{-1},
+        which is required for convergence.
+        """
         return state + inverse_lower(upper(state))
 
     # 2. Optional Neumann preconditioner: (I - L^(-1) U)
     def _apply_neumann_preconditioner(state: Array) -> Array:
+        """
+        Valuates a first-order Neumann series approximation: (I - L^{-1}U).
+
+        If L^{-1}U is small, this is an approximate solution to the scattering problem.
+        """
         return state - inverse_lower(upper(state))
 
     # 3. Handle initial state and preconditioning correctly

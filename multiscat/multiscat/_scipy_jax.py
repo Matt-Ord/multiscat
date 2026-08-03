@@ -56,6 +56,10 @@ def _solve_specular_hamiltonian(
     This function computes the eigenvalues and eigenvectors of H_0(z) once
     at the beginning of the calculation. We then use this to precondition
     our GMRES solver.
+
+    Jax vs numpy: adapted for JAX's immutable
+    arrays: the diagonal update uses `.at[...].add(...)` (functional,
+    returns a new array) instead of an in-place `copy()` + mutation.
     """
     nz = specular_potential.size
     hamiltonian = parallel_kinetic_energy.at[jnp.diag_indices(nz)].add(
@@ -70,7 +74,17 @@ def _build_lower_block_factors(
     eigenvalues: Array,
     eigenvectors: Array,
 ) -> Array:
-    """Calculate (H_0 + E_alpha)^(-1) C_i u_i."""
+    """
+    Calculate (H_0 + E_alpha)^(-1) C_i u_i.
+
+    Adaptions for JAX:
+    vectorized across all channels at once via broadcasting
+    instead of looping over each channel
+    individually. `denominator[:, j]` corresponds to the original loop's
+    `channel_energy[j] + eigenvalues`, and `eigenvectors @ g` computes
+    what the original did per-column via
+    `einsum("ki,i->k", eigenvectors, g[:, j])`.
+    """
     denominator = eigenvalues[:, None] + channel_energy[None, :]
 
     g = eigenvectors[-1, :, None] / denominator
@@ -90,6 +104,14 @@ def _apply_upper_block(
     diffraction channels. Since V_1(z) is responsible for all coupling
     between diffraction channels, this step represents the physical momentum
     transfer parallel to the corrugated surface.
+
+    Adaptions for JAX:
+    vectorized across all channels at once instead of looping.
+    The strictly-upper-triangular mask
+    (`triu(..., k=1)`) selects exactly the same j > channel coupling
+    terms the original loop restricts to via `channel + 1 :` slicing;
+    the einsum then sums over those masked entries for every channel
+    simultaneously.
     """
     n = state_vector.shape[0]
 
@@ -107,21 +129,64 @@ def apply_inverse_diagonal_to_channel(
     operator_data: DiagonalOperatorData,
     channel: int,
 ) -> Array:
-    """Apply (H_0 - E_i + C_i u_i v_i^T)^(-1) to a single channel state vector."""
-    # 1. Transform to H_0 eigenbasis
+    """
+    Apply the inverse operator (H_0 - E_i + C_i u_i v_i^T)^(-1).
+
+    This applies the uncoupled Green's function to the state vector
+    1 / (H_0 - E_i + C_i u_i v_i^T) for the channel i, where C_i is the
+    outgoing wave boundary correction at the final grid point.
+
+    Step A (previously _apply_inverse_specular_operator_to_channel)
+
+    Apply the inverse specular operator (H_0 - E_i)^(-1).
+
+    This applies the uncoupled Green's function to the state vector
+    1 / (H_0 - E_i) for the channel i.
+
+    Step B (previously _apply_boundary_corrections_to_channel)
+
+    Enforce the outgoing wave boundary conditions on the state vector.
+
+    This applies the outgoing-wave boundary correction C_i at the final
+    grid point (nz - 1) using the Sherman-Morrison rule.
+
+    We want to apply the operator
+        (H_0 - E_alpha + C_i u_i v_i^T)^(-1) psi
+    We have the result of (H_0 - E_alpha)^(-1) psi, and we can
+    therefore calculate the inverse using the Sherman-Morrison formula.
+
+    Here,
+     u is a vector with a 1 at the boundary and 0 elsewhere
+     (H_0 - E_alpha)^(-1) C_i u_i is simply lower_block_factors[:, i]
+     v^T is a vector with a boundary value -C at the boundary and 0 elsewhere
+
+
+    The Sherman-Morrison formula for the inverse of a rank-1 update is
+    (H_0 - E_alpha + C_i u_i v_i^T)^(-1) psi
+    =
+    (H_0 - E_alpha)^(-1) psi -
+    (lower_block * (v_i^T (H_0 - E_alpha)^(-1) psi)) / denom
+
+    with denom = 1.0 - (v_i^T (H_0 - E_alpha)^(-1) C_i u_i)
+
+    where v_i^T (H_0 - E_alpha)^(-1) psi is channel_state[-1]
+          (H_0 - E_alpha)^(-1) psi  is channel_state
+
+    """
+    # A.1 Transform to H_0 eigenbasis, where the uncoupled Green's function is diagonal.
     transformed = operator_data.eigenvectors.T @ channel_state
 
-    # 2. Apply uncoupled diagonal Green's function
+    # A.2 Apply uncoupled diagonal Green's function (H_0 - E_alpha)^(-1)
     denom_diag = (
         operator_data.perpendicular_kinetic_difference[channel]
         + operator_data.eigenvalues
     )
     transformed = transformed / denom_diag
 
-    # 3. Transform back to real-space grid basis
+    # A.3 Convert back to initial basis
     channel_state = operator_data.eigenvectors @ transformed
 
-    # 4. Sherman-Morrison boundary condition update
+    # B Sherman-Morrison boundary condition update
     denom_sm = 1.0 - (
         operator_data.lower_block_factors[-1, channel]
         * operator_data.outgoing_log_derivative_wave[channel]
@@ -141,25 +206,56 @@ def apply_inverse_lower_block(
     state_vector: Array,
     operator_data: ScipyOperatorData,
 ) -> Array:
-    """Apply the inverse of the lower block diagonal operator to the state vector."""
+    """
+    Apply the inverse of the lower block diagonal operator to the state vector.
+
+    The lower diagonal operator
+    contains (H_0 - E_i + C_i u_i v_i^T + V^lower)
+
+    This can be inverted efficiently using a simple trick!
+    For a lower diagonal operator L = (D + V^lower)
+    where D is the diagonal part of the operator, and V is the
+    part that is strictly lower diagonal, we can write
+
+    (D_i out_i + V^lower_ij out_j) = state_i
+    => out_i = D^(-1)_i (state_i - V^lower_ij out_j)
+
+    but since V^lower is strictly lower diagonal, we can solve for out_i!
+
+    Adaptions for JAX:
+      - The numpy version slices `potential_pairs[channel, :channel, :]`
+        and `solved[:channel, :]` to restrict the coupling sum to
+        already-solved channels; the JAX version instead masks the full
+        array (`channel_indices < channel`), since `lax.fori_loop`
+        requires statically-shaped arrays and can't dynamically slice a
+        shrinking range.
+      - `solved[channel, :] -=` (in-place) becomes `rhs = solved[channel]
+        - coupling` (functional), since JAX arrays are immutable.
+      - The in-place call to `_apply_inverse_diagonal_to_channel` becomes
+        a functional call whose result is written back via
+        `solved.at[channel].set(updated)`.
+      - The Python `for channel in range(...)` loop becomes
+        `lax.fori_loop`, required for this to be jit-compiled.
+
+    """
     n = state_vector.shape[0]
     channel_indices = jnp.arange(n)
 
     def body(channel: int, solved: jnp.ndarray) -> jnp.ndarray:
-        # 1. Mask out channels j >= channel so array shapes remain strictly static
+        # Mask out channels j >= channel so array shapes remain strictly static
         mask = (channel_indices < channel)[:, None]  # Shape: (n, 1)
         masked_solved = solved * mask  # Zeroes out rows >= channel
 
-        # 2. Compute channel coupling term
+        # Compute channel coupling term (V^lower_ij out_j)
         coupling = jnp.einsum(
             "ik,ik->k",
             operator_data.potential_pairs[channel],
             masked_solved,
         )
-
+        # subtract V^lower_ij out_j
         rhs = solved[channel] - coupling
 
-        # 3. Invert diagonal operator for current channel
+        # Apply D^(-1)_i
         updated = apply_inverse_diagonal_to_channel(
             rhs,
             operator_data,
@@ -181,6 +277,15 @@ def _apply_inverse_specular_operator(
 
     This applies the uncoupled Green's function to the state vector
     1 / (H_0 - E_i) for all channels at once.
+
+    Adaptions for JAX:
+      - `einsum("cl,lk->ck", state_vector, eigenvectors)` is
+        `state_vector @ eigenvectors`.
+      - `einsum("cl,kl->ck", transformed_state, eigenvectors)` is
+        `transformed_state @ eigenvectors.T` (contracting eigenvectors'
+        second index, not its first — note the transpose here, unlike
+        the per-channel version of this operator).
+
     """
     # 1. Transform to H_0 eigenbasis
     transformed_state = state_vector @ operator_data.eigenvectors
@@ -204,7 +309,17 @@ def _add_boundary_corrections(
     """
     Enforce outgoing wave boundary conditions across all channels simultaneously.
 
-    Applies the Sherman-Morrison boundary correction at the final grid point (nz - 1).
+    This applies the outgoing-wave boundary correction C_i at the final
+    grid point (nz - 1) using the Sherman-Morrison rule for all channels at once.
+
+    Adaptions for JAX:
+    `denom` and `fac` are computed identically.
+    Only difference: returns the corrected state as a new
+    array (`state_vector + ...`) instead of mutating `state_vector` in
+    place (`state_vector += ...`), since JAX arrays are immutable.
+    Confirm call sites use the returned value rather than assuming an
+    in-place update.
+
     """
     denom = 1.0 - (
         operator_data.lower_block_factors[-1, :]
@@ -222,7 +337,9 @@ def apply_inverse_diagonal(
     operator_data: DiagonalOperatorData,
 ) -> Array:
     """Apply D^(-1) to all channels in parallel."""
+    # Apply (H_0 - E_i)^(-1) to all channels at once in the H_0 eigenbasis.
     out = _apply_inverse_specular_operator(state_vector, operator_data)
+    # Apply the Sherman-Morrison boundary correction for each channel to the out.
     return _add_boundary_corrections(out, operator_data)
 
 
@@ -232,28 +349,40 @@ def apply_diagonal(
     operator_data: DiagonalOperatorData,
 ) -> Array:
     """
-    Apply uncoupled diagonal block operator.
+    Apply the uncoupled diagonal block operator (H_0 - E_i + C_i u_i v_i^T).
 
-    D_i = (H_0 - E_i + C_i u_i v_i^T)
-    to all channels in parallel.
+    This is the inverse operation of apply_inverse_diagonal
+
+    Adaptions for JAX:
+      - `state_vector @ eigenvectors` matches numpy's
+        `einsum("cl,lk->ck", out, eigenvectors)`.
+      - `transformed @ eigenvectors.T` matches numpy's
+        `einsum("cl,kl->ck", transformed_state, eigenvectors)`.
+      - Boundary values are captured before the transform (same as numpy's
+        `boundary_values = out[:, -1].copy()`), then subtracted from index
+        -1 afterward, functionally (`.at[:, -1].add(-boundary_update)`)
+        instead of in-place.
+
     """
-    # 1. Capture input boundary values at z = -1 before applying (H_0 - E_i)
+    # A. Capture input boundary values at z = -1 before applying (H_0 - E_i)
+    # The rank-1 boundary update depends on the input state, not A @ state.
     boundary_values = state_vector[:, -1]
 
-    # 2. Transform to H_0 eigenbasis (n_channels, nz) @ (nz, nz)
+    # B. Apply A = (H_0 - E_i) in the H_0 eigenbasis.
+    # B.1 Transform to H_0 eigenbasis (n_channels, nz) @ (nz, nz)
     transformed = state_vector @ operator_data.eigenvectors
 
-    # 3. Multiply by diagonal spectrum (H_0 - E_i)
+    # B.2 Multiply by diagonal spectrum (H_0 - E_i)
     spectrum = (
         operator_data.perpendicular_kinetic_difference[:, None]
         + operator_data.eigenvalues[None, :]
     )
     transformed = transformed * spectrum
 
-    # 4. Transform back to original grid basis
+    # B.3 Transform back to original grid basis
     out = transformed @ operator_data.eigenvectors.T
 
-    # 5. Apply rank-1 boundary correction -C_i e_n e_n^T at final grid point
+    # C. Apply rank-1 boundary correction -C_i e_n e_n^T at final grid point
     boundary_update = operator_data.outgoing_log_derivative_wave * boundary_values
     return out.at[:, -1].add(-boundary_update)
 
@@ -263,12 +392,22 @@ def apply_lower_block(
     state_vector: Array,
     operator_data: ScipyOperatorData,
 ) -> Array:
-    """Apply the lower block diagonal operator (D + V^lower) to the state vector."""
+    """
+    Apply the lower block diagonal operator (D + V^lower) to the state vector.
+
+    This is the inverse operation of apply_inverse_lower_block.
+
+    """
     n = state_vector.shape[0]
 
     # 1. Mask upper triangular and diagonal elements (j >= i) to keep only j < i
-    mask = jnp.tril(jnp.ones((n, n), dtype=bool), k=-1)[:, :, None]
-    lower_potentials = jnp.where(mask, operator_data.potential_pairs, 0)
+    lower_potentials = (
+        jnp.tril(
+            jnp.ones((n, n), dtype=bool),
+            k=-1,
+        )[:, :, None]
+        * operator_data.potential_pairs
+    )
 
     # 2. Compute channel-coupling term V^lower @ state_vector in parallel
     coupling = jnp.einsum("ijk,jk->ik", lower_potentials, state_vector)
@@ -304,6 +443,27 @@ def build_scipy_operator_data[
     *,
     n_channels: int | None = None,
 ) -> ScipyOperatorData:
+    """
+    Build the operator data required for the scattering matrix solve.
+
+    Same as the original numpy implementation: selects and sorts channels
+    by perpendicular kinetic energy, warns if the highest-energy channel
+    is below the incident energy, separates the specular potential from
+    the coupling potential, computes channel-pair potential couplings via
+    circular index differences, solves the specular Hamiltonian for its
+    eigenbasis, and builds the lower-block Sherman-Morrison factors and
+    outgoing-wave log-derivative data.
+
+    Adaptions for JAX:
+      - `channel_energy`, `eigenvalues`, and `eigenvectors` are converted
+        to JAX arrays (`jnp.asarray`) *before* being passed into
+        `_build_lower_block_factors`, so that function operates on JAX
+        arrays internally rather than numpy arrays.
+      - All fields of the returned `ScipyOperatorData` are wrapped in
+        `jnp.asarray(...)`, so the returned object holds JAX arrays
+        throughout, rather than the numpy arrays the original version
+        returns. This is required for downstream JAX-jitted consumers.
+    """
     metadata_x01, metadata_z = split_scattering_metadata(condition.metadata)
     perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
         condition.incident_k,
@@ -408,7 +568,7 @@ def apply_upper_op(
     nkx, nky, nz = operator_data.shape
     out = flat_state.reshape((nkx * nky, nz))
 
-    active_state = flat_state.reshape((nkx * nky, nz))[operator_data.channel_idx]
+    active_state = out[operator_data.channel_idx]
     upper = _apply_upper_block(active_state, operator_data)
 
     return out.at[operator_data.channel_idx].set(upper, unique_indices=True).ravel()
