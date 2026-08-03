@@ -95,7 +95,9 @@
     "triu",
     "fori",
     "tril",
-    "jitted"
+    "jitted",
+    "imshow",
+    "cmap"
   ],
   "flagWords": ["hte", "teh", "hamiltonain"],
   "ignoreRegExpList": ["\\\\mathbf", "\\\\infty"]

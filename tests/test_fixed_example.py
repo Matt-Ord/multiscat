@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from jax import Array
@@ -26,7 +27,7 @@ from scipy.constants import (  # type: ignore[import-untyped]
     electron_volt,
     physical_constants,
 )
-from slate_core import EvenlySpacedLengthMetadata, array, basis
+from slate_core import EvenlySpacedLengthMetadata, array, basis, plot
 from slate_core.metadata import LobattoSpacedLengthMetadata
 from slate_quantum import operator
 
@@ -938,3 +939,35 @@ def benchmark_varying_shape_sweep(sizes: list[ProblemSize]) -> None:
         t0 = time.perf_counter()
         _force_ready(get_scattering_state_scipy_jax(condition, config))
         time.perf_counter() - t0
+
+
+def plot_scattering_matrix_comparison(size: ProblemSize, output_dir: Path) -> None:
+    condition, config = build_condition_and_config(size)
+
+    s_matrix_scipy = get_scattering_matrix(condition, config, backend="scipy")
+    s_matrix_jax = get_scattering_matrix(condition, config, backend="jax")
+
+    raw_scipy = np.abs(s_matrix_scipy.raw_data)
+    raw_jax = np.abs(s_matrix_jax.raw_data)
+    diff = np.abs(raw_scipy - raw_jax)
+
+    max_diff = diff.max()
+    max_diff / max(raw_scipy.max(), 1e-30)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    for ax, s_matrix, title in [
+        (axes[0], s_matrix_scipy, "scipy"),
+        (axes[1], s_matrix_jax, "jax"),
+    ]:
+        _, _, _mesh = plot.array_against_axes_2d_k(s_matrix, measure="abs", ax=ax)
+        ax.set_title(f"Scattering matrix ({title})")
+
+    diff_im = axes[2].imshow(diff.reshape(int(np.sqrt(diff.size)), -1), cmap="magma")
+    axes[2].set_title(f"|scipy - jax|  (max={max_diff:.2e})")
+    fig.colorbar(diff_im, ax=axes[2])
+
+    save_path = output_dir / f"comparison_{size.label.split()[0]}.png"
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
