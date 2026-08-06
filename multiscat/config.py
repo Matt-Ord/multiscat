@@ -166,7 +166,7 @@ class ScatteringCondition[  # noqa: PLW1641
         """
         return ScatteringCondition(
             mass=mass,
-            incident_k=momentum_from_angles(
+            incident_k=incident_k_from_angles(
                 theta=theta,
                 phi=phi,
                 energy=energy,
@@ -210,7 +210,7 @@ class ScatteringCondition[  # noqa: PLW1641
         )
 
 
-def momentum_from_angles(
+def incident_k_from_angles(
     theta: float,
     phi: float,
     energy: float,
@@ -375,3 +375,32 @@ class MorseScatteringCondition[  # noqa: PLW1641
             and self.units == other.units
             and self.morse_parameters == other.morse_parameters
         )
+
+
+def condition_in_natural_units[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+) -> ScatteringCondition[
+    EvenlySpacedLengthMetadata,
+    LobattoSpacedLengthMetadata,
+    AxisDirections,
+]:
+    # Here, we convert the scattering condition to the natural units of the problem
+    # In these units, the kinetic energy is simply k^2 which simplifies the
+    # later calculations significantly.
+    # To do this, we set hbar = 1, and the condition.mass = 1/2. This means scaling the
+    # value of the atomic mass by a factor of 1 / (2 * condition.mass).
+    out = condition.with_units(
+        UnitSystem(
+            angstrom=1.0,
+            atomic_mass=0.5 * condition.units.atomic_mass / condition.mass,
+            hbar=1.0,
+        ),
+    )
+
+    # This is a quick check to make sure that the mass is indeed 1/2 in the new units.
+    assert np.isclose(out.mass, 1 / 2)  # noqa: S101
+    return out

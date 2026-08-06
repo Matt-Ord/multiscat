@@ -21,7 +21,7 @@ from multiscat.basis import (
     close_coupling_basis,
     split_scattering_metadata,
 )
-from multiscat.config import OptimizationConfig, UnitSystem
+from multiscat.config import condition_in_natural_units
 from multiscat.multiscat._fortran import run_multiscat_fortran
 from multiscat.multiscat._scipy import (
     _build_scipy_operators,
@@ -35,7 +35,7 @@ from multiscat.multiscat._util import (
 )
 
 if TYPE_CHECKING:
-    from multiscat.config import ScatteringCondition
+    from multiscat.config import OptimizationConfig, ScatteringCondition
 
 
 def _get_scattered_intensity_data[
@@ -83,9 +83,9 @@ def get_scattering_matrix_from_preconditioned_state[
         metadata.shape,
     )
 
-    converted_condition = _as_natural_units(condition)
+    converted_condition = condition_in_natural_units(condition)
     channel_intensity = _get_scattered_intensity_data(
-        solution,  # ty:ignore[invalid-argument-type]
+        solution,
         converted_condition.metadata,
         converted_condition.incident_k,
     )
@@ -113,7 +113,7 @@ def get_preconditioned_state_from_state[
     np.dtype[np.complex128],
 ]:
     """Get the preconditioned scattering state from the optimized scattered state."""
-    converted_condition = _as_natural_units(condition)
+    converted_condition = condition_in_natural_units(condition)
     # TODO: is feels wasteful to need the L^(-1) on the full grid here  # noqa: FIX002
     # we should investigate if we can do it just from the surface state
     inverse_lower, _lower, _upper = _build_scipy_operators(
@@ -163,35 +163,6 @@ def get_scattering_matrix_from_state[
     )
 
 
-def _as_natural_units[
-    M0: EvenlySpacedLengthMetadata,
-    M1: LobattoSpacedLengthMetadata,
-    E: AxisDirections,
-](
-    condition: ScatteringCondition[M0, M1, E],
-) -> ScatteringCondition[
-    EvenlySpacedLengthMetadata,
-    LobattoSpacedLengthMetadata,
-    AxisDirections,
-]:
-    # Here, we convert the scattering condition to the natural units of the problem
-    # In these units, the kinetic energy is simply k^2 which simplifies the
-    # later calculations significantly.
-    # To do this, we set hbar = 1, and the condition.mass = 1/2. This means scaling the
-    # value of the atomic mass by a factor of 1 / (2 * condition.mass).
-    out = condition.with_units(
-        UnitSystem(
-            angstrom=1.0,
-            atomic_mass=0.5 * condition.units.atomic_mass / condition.mass,
-            hbar=1.0,
-        ),
-    )
-
-    # This is a quick check to make sure that the mass is indeed 1/2 in the new units.
-    assert np.isclose(out.mass, 1 / 2)  # noqa: S101
-    return out
-
-
 @timed
 def get_scattering_matrix[
     M0: EvenlySpacedLengthMetadata,
@@ -217,7 +188,7 @@ def get_scattering_matrix[
     This is more accurate than the von-neumann approach (requires less interations),
     but applying (D+L^(-1)) is less parrallelizable.
     """
-    converted_condition = _as_natural_units(condition)
+    converted_condition = condition_in_natural_units(condition)
 
     if backend == "fortran":
         solution = run_multiscat_fortran(converted_condition, config)
@@ -270,7 +241,7 @@ def get_scattering_matrix_von_neumann[
     (D + V_scatter)^(-1) ~ sum_{k=0}^order (-D^(-1) V_scatter)^k D^(-1))
     which may be more parallelizable than the standard (D+L)^(-1) approach.
     """
-    converted_condition = _as_natural_units(condition)
+    converted_condition = condition_in_natural_units(condition)
     solution = run_multiscat_scipy_von_neumann(
         converted_condition,
         config,
@@ -303,7 +274,7 @@ def get_scattering_state[
     np.dtype[np.complex128],
 ]:
     """Get the full scattering state, including the interior."""
-    converted_condition = _as_natural_units(condition)
+    converted_condition = condition_in_natural_units(condition)
     solution = get_scattering_state_scipy(converted_condition, config)
 
     return State(
@@ -325,7 +296,7 @@ def get_preconditioned_scattering_state[
     np.dtype[np.complex128],
 ]:
     """Get the full scattering state, including the interior."""
-    converted_condition = _as_natural_units(condition)
+    converted_condition = condition_in_natural_units(condition)
     solution = get_preconditioned_scattering_state_scipy(converted_condition, config)
 
     return State(

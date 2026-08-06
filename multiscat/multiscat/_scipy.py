@@ -574,7 +574,7 @@ def run_multiscat_scipy[
         config=config,
     )
 
-    return solution.reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]
+    return solution.reshape(condition.metadata.shape)
 
 
 def get_scattering_state_scipy[
@@ -610,7 +610,7 @@ def get_scattering_state_scipy[
         lower=lower,
     )
 
-    return solution.reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]
+    return solution.reshape(condition.metadata.shape)
 
 
 def get_preconditioned_scattering_state_scipy[
@@ -645,4 +645,4 @@ def get_preconditioned_scattering_state_scipy[
         config=config,
     )
 
-    return solution.reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]
+    return solution.reshape(condition.metadata.shape)

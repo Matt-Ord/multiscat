@@ -58,12 +58,12 @@ def debug_solve_lower_block_fortran(
 ) -> NDArray[np.complex128]: ...
 
 __all__ = [
-    "run_multiscat_fortran",
-    "get_perpendicular_kinetic_difference",
-    "get_parallel_kinetic_energy",
-    "get_lobatto_weights",
-    "get_abc_arrays",
-    "debug_build_preconditioner_fortran",
     "debug_apply_upper_block_fortran",
+    "debug_build_preconditioner_fortran",
     "debug_solve_lower_block_fortran",
+    "get_abc_arrays",
+    "get_lobatto_weights",
+    "get_parallel_kinetic_energy",
+    "get_perpendicular_kinetic_difference",
+    "run_multiscat_fortran",
 ]
