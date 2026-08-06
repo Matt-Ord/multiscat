@@ -17,9 +17,9 @@ from multiscat.config import (
     condition_in_natural_units,
     incident_k_from_angles,
 )
-from multiscat.multiscat import get_scattering_state
-from multiscat.multiscat._multiscat import (
+from multiscat.multiscat import (
     get_preconditioned_state_from_state,
+    get_scattering_state,
 )
 from multiscat.multiscat._util import get_full_a_wave, get_full_b_wave
 
