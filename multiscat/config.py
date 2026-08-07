@@ -376,6 +376,49 @@ class MorseScatteringCondition[  # noqa: PLW1641
             and self.morse_parameters == other.morse_parameters
         )
 
+    def with_units(self, units: UnitSystem) -> MorseScatteringCondition:
+        """Convert this scattering condition to a different unit system."""
+        mass_factor = units.atomic_mass / self.units.atomic_mass
+        length_factor = units.angstrom / self.units.angstrom
+        return MorseScatteringCondition(
+            mass=self.mass * mass_factor,
+            incident_k=(
+                self.incident_k[0] / length_factor,
+                self.incident_k[1] / length_factor,
+                self.incident_k[2] / length_factor,
+            ),
+            morse_parameters=operator.build.CorrugatedMorseParameters(
+                depth=self.morse_parameters.depth
+                * (units.kinetic_energy_unit / self.units.kinetic_energy_unit),
+                height=self.morse_parameters.height * length_factor,
+                offset=self.morse_parameters.offset * length_factor,
+                beta=self.morse_parameters.beta,
+            ),
+            metadata=_metadata_with_units(self.metadata, self.units, units),
+            units=units,
+        )
+
+
+def get_condition_natural_units[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    condition: ScatteringCondition[M0, M1, E],
+) -> UnitSystem:
+    """Convert a scattering condition to natural units."""
+    # Here, we convert the scattering condition to the natural units of the problem
+    # In these units, the kinetic energy is simply k^2 which simplifies the
+    # later calculations significantly.
+    # To do this, we set hbar = 1, and the condition.mass = 1/2. This means scaling the
+    # value of the atomic mass by a factor of 1 / (2 * condition.mass).
+
+    return UnitSystem(
+        angstrom=1.0,
+        atomic_mass=0.5 * condition.units.atomic_mass / condition.mass,
+        hbar=1.0,
+    )
+
 
 def condition_in_natural_units[
     M0: EvenlySpacedLengthMetadata,
@@ -388,17 +431,8 @@ def condition_in_natural_units[
     LobattoSpacedLengthMetadata,
     AxisDirections,
 ]:
-    # Here, we convert the scattering condition to the natural units of the problem
-    # In these units, the kinetic energy is simply k^2 which simplifies the
-    # later calculations significantly.
-    # To do this, we set hbar = 1, and the condition.mass = 1/2. This means scaling the
-    # value of the atomic mass by a factor of 1 / (2 * condition.mass).
     out = condition.with_units(
-        UnitSystem(
-            angstrom=1.0,
-            atomic_mass=0.5 * condition.units.atomic_mass / condition.mass,
-            hbar=1.0,
-        ),
+        get_condition_natural_units(condition),
     )
 
     # This is a quick check to make sure that the mass is indeed 1/2 in the new units.
