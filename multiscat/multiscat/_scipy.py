@@ -1,3 +1,4 @@
+# noqa: CPY001
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -100,6 +101,26 @@ def _apply_upper_block(
             state_vector[channel + 1 :, :],
         )
     return result
+
+
+def _apply_upper_block_adjoint(
+    grad_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: ScipyOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    grad_in = np.zeros_like(grad_vector)
+    n_channels = grad_vector.shape[0]
+
+    # y_i = sum_{j>i} Q_{i,j} x_j
+    # grad_x_j += sum_{i<j} Q_{i,j}^H grad_y_i
+    for i in range(n_channels):
+        pairs = operator_data.potential_pairs[
+            i,
+            i + 1 :,
+            :,
+        ]  # shape (n_channels-i-1, nz)
+        grad_in[i + 1 :, :] += np.conj(pairs) * grad_vector[i, :]
+
+    return grad_in
 
 
 def _apply_inverse_specular_operator_to_channel(
@@ -208,6 +229,28 @@ def _apply_inverse_diagonal_to_channel(
         operator_data,
         channel_idx=channel_idx,
     )
+
+
+def _apply_inverse_diagonal_adjoint_to_channel(
+    rhs: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    operator_data: DiagonalOperatorData,
+    *,
+    channel_idx: int,
+) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+    # Solve D_i^H x = rhs, where D_i = A_i - c_i e_n e_n^T
+    # and A_i is the real-symmetric H_0 block.
+    tmp = np.einsum("lk,l->k", np.conj(operator_data.eigenvectors), rhs)
+    tmp /= (
+        operator_data.perpendicular_kinetic_difference[channel_idx]
+        + operator_data.eigenvalues
+    )
+    out = np.einsum("kl,l->k", np.conj(operator_data.eigenvectors), tmp)
+
+    c = np.conj(operator_data.outgoing_log_derivative_wave[channel_idx])
+    denom = 1.0 - operator_data.lower_block_factors[-1, channel_idx] * c
+    fac = out[-1] * c / denom
+    out += fac * operator_data.lower_block_factors[:, channel_idx]
+    return out
 
 
 def _apply_inverse_specular_operator(
@@ -333,6 +376,35 @@ def _apply_diagonal_to_channel(
     )
 
 
+def _apply_diagonal_to_channel_adjoint(
+    grad_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: DiagonalOperatorData,
+    *,
+    channel_idx: int,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    """Adjoint of _apply_diagonal_to_channel."""
+    grad_in = np.zeros_like(grad_vector)
+
+    V = operator_data.eigenvectors  # noqa: N806
+    d = (
+        operator_data.perpendicular_kinetic_difference[channel_idx]
+        + operator_data.eigenvalues
+    )
+    c = operator_data.outgoing_log_derivative_wave[channel_idx]
+
+    g = grad_vector[channel_idx, :]
+
+    # Reverse of: state_vector[channel_idx, :] = V @ (d * (V^T @ x))
+    tmp = np.einsum("lk,l->k", np.conj(V), g)  # V^H @ g
+    tmp *= np.conj(d)
+    grad_in[channel_idx, :] = np.einsum("kl,l->k", np.conj(V), tmp)  # V* @ tmp
+
+    # Reverse of: state_vector[channel_idx, -1] -= c * boundary_value
+    grad_in[channel_idx, -1] -= np.conj(c) * g[-1]
+
+    return grad_in
+
+
 def apply_diagonal(
     state_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
     operator_data: DiagonalOperatorData,
@@ -378,6 +450,31 @@ def _apply_lower_block(
         out[channel, :] += np.einsum("ik,ik->k", pairs, state_vector[:channel, :])
 
     return out
+
+
+def _apply_lower_block_adjoint(
+    grad_vector: np.ndarray[tuple[int, int], np.dtype[np.complex128]],
+    operator_data: ScipyOperatorData,
+) -> np.ndarray[tuple[int, int], np.dtype[np.complex128]]:
+    grad_in = np.zeros_like(grad_vector)
+    n_channels = grad_vector.shape[0]
+
+    # D_i^H contribution
+    for channel in range(n_channels):
+        grad_in += _apply_diagonal_to_channel_adjoint(
+            grad_vector,
+            operator_data,
+            channel_idx=channel,
+        )
+
+    # Off-diagonal lower-coupling contribution:
+    # y_m += sum_{j<m} P_{m,j} x_j
+    # so grad_x_j += sum_{m>j} P_{m,j}^H grad_y_m
+    for m in range(n_channels):
+        pairs = operator_data.potential_pairs[m, :m, :]  # shape (m, nz)
+        grad_in[:m, :] += np.conj(pairs) * grad_vector[m, :]
+
+    return grad_in
 
 
 @dataclass(frozen=True)
@@ -505,10 +602,37 @@ def _build_scipy_operators[
         out[channel_idx] = lower
         return out.ravel()
 
-    inverse_lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
-        (state_size, state_size),
-        _apply_inverse_lower,
-        dtype=np.complex128,  # type: ignore[assignment]# ty:ignore[parameter-already-assigned]
+    def _apply_inverse_lower_adjoint(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        out = flat_state.reshape((nkx * nky, nz), copy=True)
+        solved = out.copy()
+
+        # Backward substitution for L^H
+        for pos in range(len(channel_idx) - 1, -1, -1):
+            rhs = out[channel_idx[pos], :].copy()
+
+            if pos + 1 < len(channel_idx):
+                pairs = operator_data.potential_pairs[pos + 1 :, pos, :]
+                rhs -= np.einsum(
+                    "ik,ik->k",
+                    np.conj(pairs),
+                    solved[channel_idx[pos + 1 :], :],
+                )
+
+            solved[channel_idx[pos], :] = _apply_inverse_diagonal_adjoint_to_channel(
+                rhs,
+                operator_data,
+                channel_idx=pos,
+            )
+
+        return solved.ravel()
+
+    inverse_lower = scipy.sparse.linalg.LinearOperator(
+        shape=(state_size, state_size),
+        matvec=_apply_inverse_lower,  # ty: ignore[unknown-argument]
+        rmatvec=_apply_inverse_lower_adjoint,  # ty: ignore[unknown-argument]
+        dtype=np.complex128,  # type: ignore[assignment]
     )
 
     def _apply_lower(
@@ -519,10 +643,19 @@ def _build_scipy_operators[
         out[channel_idx] = lower
         return out.ravel()
 
+    def _apply_lower_adjoint(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        out = flat_state.reshape((nkx * nky, nz), copy=True)
+        grad = np.zeros_like(out)
+        grad[channel_idx] = _apply_lower_block_adjoint(out[channel_idx], operator_data)
+        return grad.ravel()
+
     lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
-        (state_size, state_size),
-        _apply_lower,
-        dtype=np.complex128,  # type: ignore[assignment]# ty:ignore[parameter-already-assigned]
+        shape=(state_size, state_size),
+        matvec=_apply_lower,  # ty: ignore[unknown-argument]
+        rmatvec=_apply_lower_adjoint,  # ty: ignore[unknown-argument]
+        dtype=np.complex128,  # type: ignore[assignment]
     )
 
     def _apply_upper(
@@ -533,10 +666,19 @@ def _build_scipy_operators[
         out[channel_idx] = upper
         return out.ravel()
 
+    def _apply_upper_adjoint(
+        flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
+    ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
+        out = flat_state.reshape((nkx * nky, nz), copy=True)
+        grad = np.zeros_like(out)
+        grad[channel_idx] = _apply_upper_block_adjoint(out[channel_idx], operator_data)
+        return grad.ravel()
+
     upper = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
-        (state_size, state_size),
-        _apply_upper,
-        dtype=np.complex128,  # type: ignore[assignment]  # ty:ignore[parameter-already-assigned]
+        shape=(state_size, state_size),
+        matvec=_apply_upper,  # ty: ignore[unknown-argument]
+        rmatvec=_apply_upper_adjoint,  # ty: ignore[unknown-argument]
+        dtype=np.complex128,  # type: ignore[assignment]
     )
     return inverse_lower, lower, upper
 

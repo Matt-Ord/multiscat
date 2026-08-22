@@ -1,3 +1,6 @@
+# noqa: CPY001
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -108,8 +111,70 @@ def get_ab_waves(
             -1j * theta,
         )
 
-    b_wave = b_wave * metadata.basis_weights[-1]
+    b_wave *= metadata.basis_weights[-1]
     return (a_wave.reshape((nkx, nky)), b_wave.reshape((nkx, nky)))
+
+
+def get_b_wave_full(
+    metadata: LobattoSpacedMetadata,
+    perpendicular_kinetic_difference: np.ndarray,
+) -> np.ndarray:
+    """
+    Return the outgoing-wave factor over the full z grid.
+
+    Output shape:
+        (nkx, nky, nz)
+    """
+    nkx, nky = perpendicular_kinetic_difference.shape
+    nz = metadata.fundamental_size
+
+    channel_energy = perpendicular_kinetic_difference.ravel(order="C")
+    dk = np.sqrt(np.abs(channel_energy))
+
+    z = metadata.values  # (nz,)
+    z0 = metadata.domain.start
+
+    b_wave = np.zeros((channel_energy.size, nz), dtype=np.complex128)
+
+    open_channel = channel_energy < 0.0
+    if np.any(open_channel):
+        theta = dk[open_channel, None] * (z[None, :] - z0)
+
+        b_wave[open_channel] = np.sqrt(dk[open_channel])[:, None] * np.exp(-1j * theta)
+
+    b_wave *= metadata.basis_weights[None, :]
+
+    return b_wave.reshape(nkx, nky, nz)
+
+
+def get_a_wave_full(
+    metadata: LobattoSpacedMetadata,
+    perpendicular_kinetic_difference: np.ndarray,
+) -> np.ndarray:
+    """
+    Return the outgoing-wave factor over the full z grid.
+
+    Output shape:
+        (nkx, nky, nz)
+    """
+    nkx, nky = perpendicular_kinetic_difference.shape
+    nz = metadata.fundamental_size
+
+    channel_energy = perpendicular_kinetic_difference.ravel(order="C")
+    dk = np.sqrt(np.abs(channel_energy))
+
+    z = metadata.values  # (nz,)
+    z0 = metadata.domain.start
+
+    a_wave = np.zeros((channel_energy.size, nz), dtype=np.complex128)
+
+    open_channel = channel_energy < 0.0
+    if np.any(open_channel):
+        theta = dk[open_channel, None] * (z[None, :] - z0)
+
+        a_wave[open_channel] = np.exp(-2.0j * theta)
+
+    return a_wave.reshape(nkx, nky, nz)
 
 
 def get_ab_wave_for_condition[
@@ -130,6 +195,40 @@ def get_ab_wave_for_condition[
         metadata_x01,
     )
     return get_ab_waves(metadata_z, perpendicular_kinetic_difference)
+
+
+def get_b_wave_full_for_condition[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+    incident_k: tuple[float, float, float],
+) -> np.ndarray:
+    """Get the asymptotic initial state and final scattered state amplitude factors."""
+    metadata_x01, metadata_z = split_scattering_metadata(metadata)
+    perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
+        incident_k,
+        metadata_x01,
+    )
+    return get_b_wave_full(metadata_z, perpendicular_kinetic_difference)
+
+
+def get_a_wave_full_for_condition[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+    incident_k: tuple[float, float, float],
+) -> np.ndarray:
+    """Get the asymptotic initial state and final scattered state amplitude factors."""
+    metadata_x01, metadata_z = split_scattering_metadata(metadata)
+    perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
+        incident_k,
+        metadata_x01,
+    )
+    return get_a_wave_full(metadata_z, perpendicular_kinetic_difference)
 
 
 def get_outgoing_log_derivative_wave(

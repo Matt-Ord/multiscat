@@ -1,3 +1,4 @@
+# noqa: CPY001
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -8,6 +9,8 @@ from tqdm import tqdm
 
 if TYPE_CHECKING:
     from multiscat.config import OptimizationConfig
+
+LAST_ITERATIONS: int = 0
 
 
 @timed
@@ -86,9 +89,12 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line  # noqa: PLR0913
     )
 
     resid_bar = tqdm(total=1.0, desc="Total Convergence", position=1, leave=False)
+    n_iterations = 0
 
     def _callback(pr_norm: float) -> None:
         error = max(0, round(np.log10(pr_norm / config.precision), 3))
+        nonlocal n_iterations
+        n_iterations += 1
         next_progress = round(float(resid_bar.total) - error, 3)  # ty:ignore[invalid-argument-type]
         if next_progress < 0:
             resid_bar.reset(total=error)
@@ -115,6 +121,9 @@ def run_gauss_seidel_gradient_decent(  # cspell: disable-line  # noqa: PLR0913
         ),
     )
     resid_bar.close()
+
+    global LAST_ITERATIONS  # noqa: PLW0603
+    LAST_ITERATIONS = n_iterations
 
     if gmres_info != 0:
         msg = (
