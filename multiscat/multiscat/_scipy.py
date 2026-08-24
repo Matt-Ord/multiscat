@@ -647,9 +647,8 @@ def _build_scipy_operators[
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
         out = flat_state.reshape((nkx * nky, nz), copy=True)
-        grad = np.zeros_like(out)
-        grad[channel_idx] = _apply_lower_block_adjoint(out[channel_idx], operator_data)
-        return grad.ravel()
+        out[channel_idx] = _apply_lower_block_adjoint(out[channel_idx], operator_data)
+        return out.ravel()
 
     lower = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         shape=(state_size, state_size),
@@ -670,9 +669,8 @@ def _build_scipy_operators[
         flat_state: np.ndarray[tuple[int], np.dtype[np.complex128]],
     ) -> np.ndarray[tuple[int], np.dtype[np.complex128]]:
         out = flat_state.reshape((nkx * nky, nz), copy=True)
-        grad = np.zeros_like(out)
-        grad[channel_idx] = _apply_upper_block_adjoint(out[channel_idx], operator_data)
-        return grad.ravel()
+        out[channel_idx] = _apply_upper_block_adjoint(out[channel_idx], operator_data)
+        return out.ravel()
 
     upper = scipy.sparse.linalg.LinearOperator(  # type: ignore[call-arg,unknown]
         shape=(state_size, state_size),
