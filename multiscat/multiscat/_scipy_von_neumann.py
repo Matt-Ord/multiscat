@@ -181,4 +181,4 @@ def run_multiscat_scipy_von_neumann[
         )
         raise RuntimeError(msg)
 
-    return np.asarray(solution, dtype=np.complex128).reshape(condition.metadata.shape)  # ty:ignore[invalid-return-type]
+    return np.asarray(solution, dtype=np.complex128).reshape(condition.metadata.shape)
