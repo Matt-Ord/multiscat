@@ -85,7 +85,7 @@ def get_scattering_matrix_from_preconditioned_state[
 
     converted_condition = _as_natural_units(condition)
     channel_intensity = _get_scattered_intensity_data(
-        solution,  # ty:ignore[invalid-argument-type]
+        solution,
         converted_condition.metadata,
         converted_condition.incident_k,
     )
