@@ -20,3 +20,5 @@ Cargo.lock
 .ruff_cache
 .venv
 *.egg-info
+*.png
+*.gif

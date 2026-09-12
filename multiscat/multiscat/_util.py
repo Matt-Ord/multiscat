@@ -176,6 +176,106 @@ def get_b_wave(
     return np.sqrt(dk) * np.exp(-1j * theta) * metadata.basis_weights[-1]
 
 
+def _get_full_b_wave(
+    metadata: LobattoSpacedMetadata,
+    perpendicular_kinetic_difference: np.ndarray[
+        tuple[int, int],
+        np.dtype[np.floating],
+    ],
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complexfloating]]:
+    """
+    Return the outgoing-wave factor over the full z grid.
+
+    Output shape:
+        (nkx, nky, nz)
+    """
+    nkx, nky = perpendicular_kinetic_difference.shape
+    nz = metadata.fundamental_size
+
+    channel_energy = perpendicular_kinetic_difference.ravel()
+
+    b_wave = np.zeros(
+        (channel_energy.size, nz),
+        dtype=np.complex128,
+    )
+
+    open_channel = channel_energy < 0.0
+    z_points = metadata.values - metadata.domain.start
+    if np.any(open_channel):
+        dk = np.sqrt(np.abs(channel_energy[open_channel]))
+        theta = dk[:, None] * z_points[None, :]
+
+        b_wave[open_channel] = np.sqrt(dk)[:, None] * np.exp(-1j * theta)
+
+    b_wave *= metadata.basis_weights[None, :]
+
+    return b_wave.reshape(nkx, nky, nz)
+
+
+def get_full_b_wave[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+    incident_k: tuple[float, float, float],
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complexfloating]]:
+    """Get the asymptotic initial state and final scattered state amplitude factors."""
+    metadata_x01, metadata_z = split_scattering_metadata(metadata)
+    perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
+        incident_k,
+        metadata_x01,
+    )
+    return _get_full_b_wave(metadata_z, perpendicular_kinetic_difference)
+
+
+def _get_full_a_wave(
+    metadata: LobattoSpacedMetadata,
+    perpendicular_kinetic_difference: np.ndarray,
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complexfloating]]:
+    """
+    Return the outgoing-wave factor over the full z grid.
+
+    Output shape:
+        (nkx, nky, nz)
+    """
+    nkx, nky = perpendicular_kinetic_difference.shape
+    nz = metadata.fundamental_size
+
+    channel_energy = perpendicular_kinetic_difference.ravel()
+
+    z = metadata.values  # (nz,)
+    z0 = metadata.domain.start
+
+    a_wave = np.zeros((channel_energy.size, nz), dtype=np.complex128)
+
+    open_channel = channel_energy < 0.0
+    if np.any(open_channel):
+        dk = np.sqrt(np.abs(channel_energy[open_channel]))
+        theta = dk[:, None] * (z[None, :] - z0)
+
+        a_wave[open_channel] = np.exp(-2.0j * theta)
+
+    return a_wave.reshape(nkx, nky, nz)
+
+
+def get_full_a_wave[
+    M0: EvenlySpacedLengthMetadata,
+    M1: LobattoSpacedLengthMetadata,
+    E: AxisDirections,
+](
+    metadata: ScatteringBasisMetadata[M0, M1, E],
+    incident_k: tuple[float, float, float],
+) -> np.ndarray[tuple[int, int, int], np.dtype[np.complexfloating]]:
+    """Get the asymptotic initial state and final scattered state amplitude factors."""
+    metadata_x01, metadata_z = split_scattering_metadata(metadata)
+    perpendicular_kinetic_difference = get_perpendicular_kinetic_difference(
+        incident_k,
+        metadata_x01,
+    )
+    return _get_full_a_wave(metadata_z, perpendicular_kinetic_difference)
+
+
 def get_target_state[
     M0: EvenlySpacedLengthMetadata,
     M1: LobattoSpacedLengthMetadata,

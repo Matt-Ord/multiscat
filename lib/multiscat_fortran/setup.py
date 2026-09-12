@@ -17,7 +17,7 @@ from setuptools.command.build_ext import (  # ty:ignore[unresolved-import]
 )
 
 
-class F2PyBuildExt(build_ext):  # noqa: D101
+class F2PyBuildExt(build_ext):
     @override
     def run(self) -> None:
         self.build_f2py_extension()
@@ -64,7 +64,7 @@ class F2PyBuildExt(build_ext):  # noqa: D101
         env["FCFLAGS"] = (env.get("FCFLAGS", "")).strip()
         env["LDFLAGS"] = (env.get("LDFLAGS", "")).strip()
 
-        subprocess.run(command, cwd=project_dir, check=True, env=env)  # noqa: S603
+        subprocess.run(command, cwd=project_dir, check=True, env=env)
 
         built_artifacts = sorted(project_dir.glob(f"{module_name}*.so"))
         if not built_artifacts:

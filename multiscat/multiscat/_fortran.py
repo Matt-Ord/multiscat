@@ -22,7 +22,7 @@ try:
     )
 except ImportError:
 
-    def run_multiscat_fortran_raw(  # noqa: PLR0913
+    def run_multiscat_fortran_raw(  # noqa: PLR0913, PLR0917
         gmres_preconditioner_flag: int,  # noqa: ARG001
         convergence_significant_figures: int,  # noqa: ARG001
         potential_values: NDArray[np.complex128],  # noqa: ARG001
@@ -52,7 +52,7 @@ from multiscat.basis import (
 if TYPE_CHECKING:
     from multiscat.config import OptimizationConfig, ScatteringCondition
 
-    def run_multiscat_fortran_raw(  # noqa: PLR0913
+    def run_multiscat_fortran_raw(  # noqa: PLR0913, PLR0917
         gmres_preconditioner_flag: int,
         convergence_significant_figures: int,
         potential_values: NDArray[np.complex128],
